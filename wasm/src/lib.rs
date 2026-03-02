@@ -13,7 +13,7 @@ pub fn parse_pcap_to_diameter_json(bytes: &[u8], tcp_port: u16) -> Result<JsValu
     let streams = reassemble_streams(segments);
 
     let mut messages: Vec<DiameterMessageOut> = Vec::new();
-    for (_k, bufs) in streams {
+    for (k, bufs) in streams {
         for buf in bufs {
             let mut offset = 0usize;
             while offset + 20 <= buf.len() {
@@ -27,16 +27,21 @@ pub fn parse_pcap_to_diameter_json(bytes: &[u8], tcp_port: u16) -> Result<JsValu
                     continue;
                 }
                 if offset + len > buf.len() {
-                    // likely truncated tail in this chunk
                     break;
                 }
                 match parse_diameter_message(&buf[offset..offset + len]) {
-                    Ok((msg, _)) => {
+                    Ok((mut msg, _)) => {
+                        msg.src_ip = ip4_to_string(k.a_ip);
+                        msg.src_port = k.a_port;
+                        msg.dst_ip = ip4_to_string(k.b_ip);
+                        msg.dst_port = k.b_port;
+                        msg.origin_host = find_avp_text(&msg.avps, "Origin-Host").unwrap_or_default();
+                        msg.destination_host = find_avp_text(&msg.avps, "Destination-Host").unwrap_or_default();
+                        msg.msg_seq = find_avp_text(&msg.avps, "CC-Request-Number").unwrap_or_default();
                         messages.push(msg);
                         offset += len;
                     }
                     Err(_) => {
-                        // re-sync scan to next possible Diameter version byte
                         offset += 1;
                     }
                 }
@@ -57,6 +62,13 @@ pub struct DiameterMessageOut {
     pub app_id: u32,
     pub app_name: String,
     pub msg_type: String,
+    pub src_ip: String,
+    pub src_port: u16,
+    pub dst_ip: String,
+    pub dst_port: u16,
+    pub origin_host: String,
+    pub destination_host: String,
+    pub msg_seq: String,
     pub hop_by_hop: u32,
     pub end_to_end: u32,
     pub avps: Vec<AvpNodeOut>,
@@ -341,6 +353,13 @@ fn parse_diameter_message(buf: &[u8]) -> Result<(DiameterMessageOut, usize), Str
             app_id,
             app_name,
             msg_type,
+            src_ip: String::new(),
+            src_port: 0,
+            dst_ip: String::new(),
+            dst_port: 0,
+            origin_host: String::new(),
+            destination_host: String::new(),
+            msg_seq: String::new(),
             hop_by_hop,
             end_to_end,
             avps,
@@ -404,6 +423,22 @@ fn find_avp_u32(avps: &[AvpNodeOut], name: &str) -> Option<u32> {
         }
     }
     None
+}
+
+fn find_avp_text(avps: &[AvpNodeOut], name: &str) -> Option<String> {
+    for a in avps {
+        if a.name == name {
+            return Some(a.content.clone());
+        }
+        if let Some(v) = find_avp_text(&a.children, name) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn ip4_to_string(ip: [u8; 4]) -> String {
+    format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
 }
 
 fn parse_avp(buf: &[u8]) -> Result<(AvpNodeOut, usize), String> {

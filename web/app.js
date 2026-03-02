@@ -56,7 +56,8 @@ function renderList(){
   box.innerHTML = filtered.map((m,i)=>`
     <div class="item ${i===selected?"active":""}" data-i="${i}">
       <div><b>${escapeHtml(m.app_name || "-")} · ${escapeHtml(m.msg_type || "-")}</b></div>
-      <div class="muted" style="font-size:12px">${escapeHtml(m.cmd_name)} #${m.cmd_code} · flags=${escapeHtml(m.flags)}</div>
+      <div class="muted" style="font-size:12px">${escapeHtml(m.src_ip)}:${m.src_port} → ${escapeHtml(m.dst_ip)}:${m.dst_port}</div>
+      <div class="muted" style="font-size:12px">${escapeHtml(m.cmd_name)} #${m.cmd_code} · seq=${escapeHtml(m.msg_seq||"-")} · flags=${escapeHtml(m.flags)}</div>
     </div>
   `).join("");
 
@@ -74,8 +75,9 @@ function renderTree(){
   const m = filtered[selected];
   const lines = [];
   lines.push(`Diameter ${m.app_name || "-"} ${m.msg_type || "-"} cmd_code=${m.cmd_code} app_id=${m.app_id} flags=${m.flags}`);
-  lines.push(`hop_by_hop=${m.hop_by_hop}`);
-  lines.push(`end_to_end=${m.end_to_end}`);
+  lines.push(`src=${m.src_ip}:${m.src_port}  dst=${m.dst_ip}:${m.dst_port}`);
+  lines.push(`origin_host=${m.origin_host || "-"}  destination_host=${m.destination_host || "-"}`);
+  lines.push(`msg_seq=${m.msg_seq || "-"}  hop_by_hop=${m.hop_by_hop}  end_to_end=${m.end_to_end}`);
   lines.push(`AVPs count=${(m.avps||[]).length}`);
   lines.push("");
   for (const a of (m.avps||[])) renderAvpNode(a, 0, lines);
