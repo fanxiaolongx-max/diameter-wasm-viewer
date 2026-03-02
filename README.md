@@ -1,66 +1,32 @@
-# diameter-wasm-viewer
+<img src=https://github.com/RFbkak37y3kIY/webshark/assets/1423657/e769fcbf-d83b-4d07-8e86-c9b5706ad5ee width=180>
 
-浏览器端（WASM）解析 pcap/pcapng 中 Diameter(TCP) 报文，默认过滤 cmd code=272，支持树形查看与 Excel 导出。
+# webshark-ng
 
-新增：后端解析 MVP（tshark 驱动）+ Web 包浏览页面。
+**webShark** is a *Wireshark-like* webapp powered by [sharkd](https://wiki.wireshark.org/Development/sharkd) and all its dissectors 🕵️
 
-## 目录
+<img src="https://github.com/QXIP/webshark/assets/1423657/092c2544-f5db-4a79-b3da-d48df4e0813c" width=600 />
 
-- `wasm/` Rust + wasm-bindgen
-- `web/` 单页前端（`index.html` 为原 WASM 版，`backend.html` 为后端版）
-- `server/` Node.js 后端 API
+> Client-Side RTP playback powered by WASM/ffmpeg 🚀
 
-## 构建 WASM（原前端）
+<br>
 
-```bash
-cd wasm
-rustup target add wasm32-unknown-unknown
-cargo install wasm-pack
-wasm-pack build --target web --out-dir ../wasm/pkg
+## Instructions
+Mount your PCAP content directory to location `/captures` and launch webshark
+
+#### Run with Compose
 ```
-
-## 运行（原 WASM 前端）
-
-```bash
-cd ..
-python -m http.server 8000
+docker-compose up -d
 ```
-
-打开：`http://localhost:8000/web/`
-
-## 运行后端 MVP
-
-1) 安装 tshark（必须）
-
-```bash
-sudo apt install tshark
+#### Run Manually
 ```
-
-2) 安装并启动 Node 后端
-
-```bash
-cd server
-npm install
-npm run start
+docker run -ti --rm -p 8085:8085 -v $(pwd)/captures:/captures ghcr.io/qxip/webshark:latest
 ```
+#### Usage
+Browse to your webshark-ng instance, ie: `http://localhost:8085/webshark`
 
-默认监听：`http://localhost:3001`
+<br>
 
-### 后端 API
+#### Credits
+> This program is free software based on a fork of GPLv2 [webshark](https://bitbucket.org/jwzawadzki/webshark) by [Jakub Zawadzki](https://bitbucket.org/jwzawadzki) and sponsored by [qxip](https://github.com/QXIP)
 
-- `POST /api/parse`：multipart 上传（字段 `file`，可选 `port`）
-- `GET /api/sessions/:id/summary`
-- `GET /api/sessions/:id/packets?offset=&limit=&filter=`
-- `GET /api/sessions/:id/packet/:index`
-
-## 运行后端浏览页面
-
-在项目根目录另开一个静态文件服务：
-
-```bash
-python -m http.server 8000
-```
-
-打开：`http://localhost:8000/web/backend.html`
-
-页面默认请求 `http://localhost:3001`，可在页面顶部修改 API Base。
+> Dissections powered by tshark [sharkd](https://wiki.wireshark.org/Development/sharkd) from Wireshark Project. See [LICENSE](https://github.com/QXIP/node-webshark/blob/master/LICENSE) for details
