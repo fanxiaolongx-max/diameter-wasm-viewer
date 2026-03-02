@@ -1,5 +1,5 @@
 use etherparse::PacketHeaders;
-use pcap_parser::{LegacyPcapReader, PcapBlockOwned, PcapError, PcapNGReader, PcapReaderIterator};
+use pcap_parser::{traits::PcapReaderIterator, LegacyPcapReader, PcapBlockOwned, PcapError, PcapNGReader};
 use serde::Serialize;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -91,7 +91,6 @@ fn extract_from_pcapng(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, Strin
     loop {
         match reader.next() {
             Ok((offset, block)) => {
-                reader.consume(offset);
                 if let PcapBlockOwned::NG(block) = block {
                     if let pcap_parser::Block::EnhancedPacket(epb) = block {
                         if let Some(seg) = parse_one_packet(epb.data, tcp_port) {
@@ -99,6 +98,7 @@ fn extract_from_pcapng(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, Strin
                         }
                     }
                 }
+                reader.consume(offset);
             }
             Err(PcapError::Eof) => break,
             Err(PcapError::Incomplete(_)) => break,
@@ -115,12 +115,12 @@ fn extract_from_pcap(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, String>
     loop {
         match reader.next() {
             Ok((offset, block)) => {
-                reader.consume(offset);
                 if let PcapBlockOwned::Legacy(b) = block {
                     if let Some(seg) = parse_one_packet(b.data, tcp_port) {
                         out.push(seg);
                     }
                 }
+                reader.consume(offset);
             }
             Err(PcapError::Eof) => break,
             Err(PcapError::Incomplete(_)) => break,
@@ -133,30 +133,26 @@ fn extract_from_pcap(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, String>
 fn parse_one_packet(pkt: &[u8], tcp_port: u16) -> Option<TcpSeg> {
     let ph = PacketHeaders::from_ethernet_slice(pkt).ok()?;
 
-    let ip = match ph.ip? {
-        etherparse::InternetSlice::Ipv4(h, _) => h,
-        _ => return None,
-    };
-    let tcp = match ph.transport? {
-        etherparse::TransportSlice::Tcp(t) => t,
+    let (src_ip, dst_ip) = match ph.net? {
+        etherparse::NetHeaders::Ipv4(h, _) => (h.source, h.destination),
         _ => return None,
     };
 
-    let src_port = tcp.source_port();
-    let dst_port = tcp.destination_port();
+    let tcp = match ph.transport? {
+        etherparse::TransportHeader::Tcp(t) => t,
+        _ => return None,
+    };
+
+    let src_port = tcp.source_port;
+    let dst_port = tcp.destination_port;
     if src_port != tcp_port && dst_port != tcp_port {
         return None;
     }
 
-    let payload = ph.payload.to_vec();
+    let payload = ph.payload.slice().to_vec();
     if payload.is_empty() {
         return None;
     }
-
-    let mut src_ip = [0u8; 4];
-    src_ip.copy_from_slice(ip.source());
-    let mut dst_ip = [0u8; 4];
-    dst_ip.copy_from_slice(ip.destination());
 
     Some(TcpSeg {
         key: FlowKey {
@@ -165,7 +161,7 @@ fn parse_one_packet(pkt: &[u8], tcp_port: u16) -> Option<TcpSeg> {
             b_ip: dst_ip,
             b_port: dst_port,
         },
-        seq: tcp.sequence_number(),
+        seq: tcp.sequence_number,
         payload,
     })
 }
