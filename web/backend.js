@@ -26,7 +26,11 @@ async function uploadAndParse() {
   if (port) fd.append("port", port);
 
   try {
-    const r = await fetch(`${base}/api/parse`, { method: "POST", body: fd });
+    const r = await fetch(`${base}/api/parse`, {
+      method: "POST",
+      body: fd,
+      headers: { "bypass-tunnel-reminder": "true" },
+    });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || "Parse failed");
 
@@ -49,7 +53,9 @@ async function refreshPackets() {
     const q = new URLSearchParams({ offset: "0", limit: "200" });
     if (filter) q.set("filter", filter);
 
-    const r = await fetch(`${base}/api/sessions/${sessionId}/packets?${q.toString()}`);
+    const r = await fetch(`${base}/api/sessions/${sessionId}/packets?${q.toString()}`, {
+      headers: { "bypass-tunnel-reminder": "true" },
+    });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || "Fetch packets failed");
 
@@ -97,7 +103,9 @@ async function loadPacketDetail(listIndex) {
   const base = getBase();
 
   try {
-    const r = await fetch(`${base}/api/sessions/${sessionId}/packet/${pkt.index}`);
+    const r = await fetch(`${base}/api/sessions/${sessionId}/packet/${pkt.index}`, {
+      headers: { "bypass-tunnel-reminder": "true" },
+    });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || "Load detail failed");
     renderPacketTree(data);
