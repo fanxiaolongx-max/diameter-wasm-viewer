@@ -1,6 +1,7 @@
 use etherparse::PacketHeaders;
 use pcap_parser::{traits::PcapReaderIterator, LegacyPcapReader, PcapBlockOwned, PcapError, PcapNGReader};
 use serde::Serialize;
+use serde_wasm_bindgen::to_value;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
@@ -12,25 +13,27 @@ pub fn parse_pcap_to_diameter_json(bytes: &[u8], tcp_port: u16) -> Result<JsValu
     let streams = reassemble_streams(segments);
 
     let mut messages: Vec<DiameterMessageOut> = Vec::new();
-    for (_k, buf) in streams {
-        let mut offset = 0usize;
-        while offset + 20 <= buf.len() {
-            if buf[offset] != 1 {
-                offset += 1;
-                continue;
+    for (_k, bufs) in streams {
+        for buf in bufs {
+            let mut offset = 0usize;
+            while offset + 20 <= buf.len() {
+                if buf[offset] != 1 {
+                    offset += 1;
+                    continue;
+                }
+                let len = read_u24(&buf[offset + 1..offset + 4]) as usize;
+                if len < 20 || offset + len > buf.len() {
+                    break;
+                }
+                if let Ok((msg, _)) = parse_diameter_message(&buf[offset..offset + len]) {
+                    messages.push(msg);
+                }
+                offset += len;
             }
-            let len = read_u24(&buf[offset + 1..offset + 4]) as usize;
-            if len < 20 || offset + len > buf.len() {
-                break;
-            }
-            if let Ok((msg, _)) = parse_diameter_message(&buf[offset..offset + len]) {
-                messages.push(msg);
-            }
-            offset += len;
         }
     }
 
-    JsValue::from_serde(&messages).map_err(|e| JsValue::from_str(&format!("json error: {e}")))
+    to_value(&messages).map_err(|e| JsValue::from_str(&format!("json error: {e}")))
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -166,43 +169,52 @@ fn parse_one_packet(pkt: &[u8], tcp_port: u16) -> Option<TcpSeg> {
     })
 }
 
-fn reassemble_streams(segs: Vec<TcpSeg>) -> HashMap<FlowKey, Vec<u8>> {
+fn reassemble_streams(segs: Vec<TcpSeg>) -> HashMap<FlowKey, Vec<Vec<u8>>> {
     let mut grouped: HashMap<FlowKey, Vec<TcpSeg>> = HashMap::new();
     for s in segs {
         grouped.entry(s.key.clone()).or_default().push(s);
     }
 
-    let mut out: HashMap<FlowKey, Vec<u8>> = HashMap::new();
+    let mut out: HashMap<FlowKey, Vec<Vec<u8>>> = HashMap::new();
     for (k, mut v) in grouped {
         v.sort_by_key(|s| s.seq);
-        let mut buf: Vec<u8> = Vec::new();
+
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        let mut current: Vec<u8> = Vec::new();
         let mut expected_seq: Option<u32> = None;
 
         for s in v {
             match expected_seq {
                 None => {
+                    current.extend_from_slice(&s.payload);
                     expected_seq = Some(s.seq.wrapping_add(s.payload.len() as u32));
-                    buf.extend_from_slice(&s.payload);
                 }
                 Some(exp) if s.seq == exp => {
-                    buf.extend_from_slice(&s.payload);
+                    current.extend_from_slice(&s.payload);
                     expected_seq = Some(exp.wrapping_add(s.payload.len() as u32));
                 }
                 Some(exp) if s.seq < exp => {
                     let overlap = (exp - s.seq) as usize;
                     if overlap < s.payload.len() {
-                        buf.extend_from_slice(&s.payload[overlap..]);
+                        current.extend_from_slice(&s.payload[overlap..]);
                         expected_seq = Some(exp.wrapping_add((s.payload.len() - overlap) as u32));
                     }
                 }
                 Some(_) => {
-                    buf.extend_from_slice(&s.payload);
+                    if !current.is_empty() {
+                        chunks.push(std::mem::take(&mut current));
+                    }
+                    current.extend_from_slice(&s.payload);
                     expected_seq = Some(s.seq.wrapping_add(s.payload.len() as u32));
                 }
             }
         }
 
-        out.insert(k, buf);
+        if !current.is_empty() {
+            chunks.push(current);
+        }
+
+        out.insert(k, chunks);
     }
 
     out
