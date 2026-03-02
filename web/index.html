@@ -6,34 +6,80 @@
   <title>Diameter PCAP WASM Viewer</title>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
   <style>
-    body{margin:0;background:#0b1220;color:#e7ecff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-    .wrap{max-width:1400px;margin:0 auto;padding:18px}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    input,textarea{background:#0f1730;color:#e7ecff;border:1px solid #223055;border-radius:10px;padding:10px}
-    textarea{width:100%;min-height:90px}
-    button{background:#13224a;border:1px solid #2f4aa6;color:#e7ecff;border-radius:10px;padding:10px 12px;cursor:pointer}
-    .grid{display:grid;grid-template-columns:420px 1fr;gap:12px}
+    :root{
+      --bg:#f3f7ff;
+      --fg:#17233f;
+      --muted:#6c7a97;
+      --line:rgba(34,68,150,.18);
+      --glass:rgba(255,255,255,.58);
+      --glass-strong:rgba(255,255,255,.78);
+      --primary:#2e63ff;
+      --primary-2:#6f93ff;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      color:var(--fg);
+      font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      background:radial-gradient(1200px 600px at 10% -10%, #dbe8ff 0%, transparent 60%),
+                 radial-gradient(1000px 500px at 110% 10%, #e9f1ff 0%, transparent 55%),
+                 var(--bg);
+    }
+    .wrap{max-width:1420px;margin:0 auto;padding:20px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    input,textarea{
+      background:var(--glass-strong);
+      color:var(--fg);
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:12px 14px;
+      backdrop-filter: blur(10px);
+      outline:none;
+    }
+    input:focus,textarea:focus{border-color:rgba(46,99,255,.55); box-shadow:0 0 0 3px rgba(46,99,255,.12)}
+    textarea{width:100%;min-height:92px}
+    button{
+      background:linear-gradient(135deg,var(--primary),var(--primary-2));
+      border:0;
+      color:#fff;
+      border-radius:14px;
+      padding:12px 18px;
+      font-weight:700;
+      letter-spacing:.2px;
+      cursor:pointer;
+      box-shadow:0 10px 24px rgba(46,99,255,.22);
+      transition:.2s ease;
+    }
+    button:hover{transform:translateY(-1px); filter:brightness(1.04)}
+    .grid{display:grid;grid-template-columns:420px 1fr;gap:14px}
     @media(max-width:1100px){.grid{grid-template-columns:1fr}}
-    .card{border:1px solid #223055;border-radius:14px;background:#0f1730}
-    .hd{padding:12px 14px;border-bottom:1px solid #223055;font-weight:650}
-    .bd{padding:12px 14px}
-    .list{max-height:520px;overflow:auto;border:1px solid #223055;border-radius:12px}
-    .item{padding:10px;border-bottom:1px solid #223055;cursor:pointer}
-    .item.active{background:#152a66}
-    .tree{max-height:520px;overflow:auto;border:1px solid #223055;border-radius:12px;padding:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-space:pre}
-    table{width:100%;border-collapse:collapse;border:1px solid #223055}
-    th,td{border-bottom:1px solid #223055;padding:9px 10px;font-size:12px;vertical-align:top}
-    th{position:sticky;top:0;background:#0b1328;text-align:left}
-    .muted{color:#9aa7c7}
+    .card{
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:var(--glass);
+      backdrop-filter: blur(16px);
+      box-shadow:0 10px 28px rgba(10,36,99,.08);
+    }
+    .hd{padding:14px 16px;border-bottom:1px solid var(--line);font-weight:750}
+    .bd{padding:14px 16px}
+    .list,.tree{border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.66)}
+    .list{max-height:520px;overflow:auto}
+    .item{padding:11px;border-bottom:1px solid var(--line);cursor:pointer}
+    .item.active{background:rgba(46,99,255,.12)}
+    .tree{max-height:520px;overflow:auto;padding:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-space:pre}
+    table{width:100%;border-collapse:collapse;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(255,255,255,.74)}
+    th,td{border-bottom:1px solid var(--line);padding:9px 10px;font-size:12px;vertical-align:top}
+    th{position:sticky;top:0;background:rgba(241,246,255,.95);text-align:left}
+    .muted{color:var(--muted)}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h2>Diameter PCAP（WASM 解析）</h2>
-    <div class="muted">默认过滤 diameter.cmd.code==272，支持树形与 Excel 导出。</div>
+    <h2>Diameter Viewer</h2>
+    <div class="muted">default: diameter.cmd.code==272</div>
     <div class="grid" style="margin-top:12px;">
       <div class="card">
-        <div class="hd">输入与过滤</div>
+        <div class="hd">Input / Filter</div>
         <div class="bd">
           <div class="row">
             <input id="pcapFile" type="file" accept=".pcap,.pcapng,application/octet-stream"/>
@@ -41,17 +87,17 @@
           </div>
           <div class="row" style="margin-top:10px">
             <input id="filterExpr" type="text" value="diameter.cmd.code==272" style="flex:1;min-width:280px"/>
-            <button id="btnApply">应用过滤</button>
-            <button id="btnExport">导出 Excel</button>
+            <button id="btnApply">Apply</button>
+            <button id="btnExport">Export</button>
           </div>
-          <div class="muted" style="margin-top:10px">要提取的 AVP（每行一个）</div>
+          <div class="muted" style="margin-top:10px">AVP list (one per line)</div>
           <textarea id="avpList"></textarea>
           <div class="muted" id="kpi">总消息：0，过滤后：0</div>
           <div class="muted" id="errBox" style="margin-top:8px;color:#ffb4b4"></div>
         </div>
       </div>
       <div class="card">
-        <div class="hd">树形 + 提取结果</div>
+        <div class="hd">Tree / Extract</div>
         <div class="bd">
           <div class="row" style="align-items:flex-start">
             <div style="width:360px;min-width:280px">
