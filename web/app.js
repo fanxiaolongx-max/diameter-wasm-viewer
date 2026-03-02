@@ -55,8 +55,8 @@ function renderList(){
 
   box.innerHTML = filtered.map((m,i)=>`
     <div class="item ${i===selected?"active":""}" data-i="${i}">
-      <div><b>${escapeHtml(m.cmd_name)} #${m.cmd_code}</b></div>
-      <div class="muted" style="font-size:12px">flags=${escapeHtml(m.flags)} hop=${m.hop_by_hop} end=${m.end_to_end}</div>
+      <div><b>${escapeHtml(m.app_name || "-")} · ${escapeHtml(m.msg_type || "-")}</b></div>
+      <div class="muted" style="font-size:12px">${escapeHtml(m.cmd_name)} #${m.cmd_code} · flags=${escapeHtml(m.flags)}</div>
     </div>
   `).join("");
 
@@ -73,7 +73,7 @@ function renderTree(){
   if (selected < 0) return;
   const m = filtered[selected];
   const lines = [];
-  lines.push(`Diameter cmd_code=${m.cmd_code} app_id=${m.app_id} flags=${m.flags}`);
+  lines.push(`Diameter ${m.app_name || "-"} ${m.msg_type || "-"} cmd_code=${m.cmd_code} app_id=${m.app_id} flags=${m.flags}`);
   lines.push(`hop_by_hop=${m.hop_by_hop}`);
   lines.push(`end_to_end=${m.end_to_end}`);
   lines.push(`AVPs count=${(m.avps||[]).length}`);

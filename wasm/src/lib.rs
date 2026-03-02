@@ -55,6 +55,8 @@ pub struct DiameterMessageOut {
     pub cmd_code: u32,
     pub cmd_name: String,
     pub app_id: u32,
+    pub app_name: String,
+    pub msg_type: String,
     pub hop_by_hop: u32,
     pub end_to_end: u32,
     pub avps: Vec<AvpNodeOut>,
@@ -326,6 +328,9 @@ fn parse_diameter_message(buf: &[u8]) -> Result<(DiameterMessageOut, usize), Str
         }
     }
 
+    let app_name = app_name(app_id);
+    let msg_type = classify_msg_type(cmd_code, buf[4], &avps);
+
     Ok((
         DiameterMessageOut {
             version,
@@ -334,12 +339,71 @@ fn parse_diameter_message(buf: &[u8]) -> Result<(DiameterMessageOut, usize), Str
             cmd_code,
             cmd_name,
             app_id,
+            app_name,
+            msg_type,
             hop_by_hop,
             end_to_end,
             avps,
         },
         length as usize,
     ))
+}
+
+fn app_name(app_id: u32) -> String {
+    match app_id {
+        16777238 => "Gx".to_string(),
+        4 => "Gy".to_string(),
+        _ => format!("App-{app_id}"),
+    }
+}
+
+fn classify_msg_type(cmd_code: u32, flags: u8, avps: &[AvpNodeOut]) -> String {
+    let is_request = (flags & 0x80) != 0;
+
+    if cmd_code == 272 {
+        if is_request {
+            if let Some(v) = find_avp_u32(avps, "CC-Request-Type") {
+                let t = match v {
+                    1 => "CCR-I",
+                    2 => "CCR-U",
+                    3 => "CCR-T",
+                    4 => "CCR-E",
+                    _ => "CCR",
+                };
+                return t.to_string();
+            }
+            return "CCR".to_string();
+        } else {
+            return "CCA".to_string();
+        }
+    }
+
+    if is_request {
+        format!("{}-REQ", cmd_code)
+    } else {
+        format!("{}-ANS", cmd_code)
+    }
+}
+
+fn find_avp_u32(avps: &[AvpNodeOut], name: &str) -> Option<u32> {
+    for a in avps {
+        if a.name == name {
+            let c = a.content.trim();
+            if let Some(first) = c.split_whitespace().last() {
+                let s = first.trim_matches(|ch| ch == '(' || ch == ')');
+                if let Ok(v) = s.parse::<u32>() {
+                    return Some(v);
+                }
+            }
+            if let Ok(v) = c.parse::<u32>() {
+                return Some(v);
+            }
+        }
+        if let Some(v) = find_avp_u32(&a.children, name) {
+            return Some(v);
+        }
+    }
+    None
 }
 
 fn parse_avp(buf: &[u8]) -> Result<(AvpNodeOut, usize), String> {
