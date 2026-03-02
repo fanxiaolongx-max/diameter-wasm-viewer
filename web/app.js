@@ -154,10 +154,11 @@ $("#btnApply").addEventListener("click", applyFilter);
 $("#btnExport").addEventListener("click", ()=>{
   try {
     if (!extractedRows.length) return alert("无可导出的数据");
-    const wb = XLSX.utils.book_new();
-    const sheet = XLSX.utils.json_to_sheet(extractedRows, { header: ["Index","Path","AVP Name","AVP Content","AVP Flags"] });
-    XLSX.utils.book_append_sheet(wb, sheet, "Extracted AVPs");
-    XLSX.writeFile(wb, `diameter_extract_${Date.now()}.xlsx`);
+    if (!window.XLSX) throw new Error("XLSX 未加载，请刷新页面重试");
+    const wb = window.XLSX.utils.book_new();
+    const sheet = window.XLSX.utils.json_to_sheet(extractedRows, { header: ["Index","Path","AVP Name","AVP Content","AVP Flags"] });
+    window.XLSX.utils.book_append_sheet(wb, sheet, "Extracted AVPs");
+    window.XLSX.writeFile(wb, `diameter_extract_${Date.now()}.xlsx`);
     setError("");
   } catch (e) {
     setError(`导出失败：${e?.message || e}`);
