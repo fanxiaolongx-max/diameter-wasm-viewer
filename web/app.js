@@ -9,6 +9,7 @@ const defaultAvps = [
 $("#avpList").value = defaultAvps.join("\n");
 
 let allMsgs = [];
+let parseStats = null;
 let filtered = [];
 let selected = -1;
 let extractedRows = [];
@@ -144,6 +145,10 @@ function renderParseLog(){
   const lines = [];
   lines.push(`parsed_messages=${allMsgs.length}`);
   lines.push(`filtered_messages=${filtered.length}`);
+  if (parseStats){
+    lines.push(`segments=${parseStats.segments} streams=${parseStats.streams} chunks=${parseStats.chunks}`);
+    lines.push(`scans=${parseStats.scans} invalid_len=${parseStats.invalid_len} truncated=${parseStats.truncated} parse_errors=${parseStats.parse_errors}`);
+  }
   lines.push("");
   allMsgs.forEach((m, i) => {
     lines.push(
@@ -193,16 +198,22 @@ $("#pcapFile").addEventListener("change", async (e)=>{
   try {
     setError("");
     await init();
-    const port = parseInt($("#tcpPort").value, 10) || 3868;
+    const port = Number.isFinite(parseInt($("#tcpPort").value, 10)) ? parseInt($("#tcpPort").value, 10) : 0;
     const buf = new Uint8Array(await f.arrayBuffer());
     const parsed = parse_pcap_to_diameter_json(buf, port);
-    if (!Array.isArray(parsed)) {
-      throw new Error("WASM 返回结果异常（非数组）");
+    if (Array.isArray(parsed)) {
+      allMsgs = parsed;
+      parseStats = null;
+    } else if (parsed && Array.isArray(parsed.messages)) {
+      allMsgs = parsed.messages;
+      parseStats = parsed.stats || null;
+    } else {
+      throw new Error("WASM 返回结果异常");
     }
-    allMsgs = parsed;
     applyFilter();
   } catch (err) {
     allMsgs = [];
+    parseStats = null;
     filtered = [];
     selected = -1;
     renderList();

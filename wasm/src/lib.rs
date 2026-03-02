@@ -5,29 +5,56 @@ use serde_wasm_bindgen::to_value;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
+#[derive(Serialize, Debug, Clone, Default)]
+pub struct ParseStatsOut {
+    pub segments: usize,
+    pub streams: usize,
+    pub chunks: usize,
+    pub scans: usize,
+    pub parsed: usize,
+    pub invalid_len: usize,
+    pub truncated: usize,
+    pub parse_errors: usize,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct ParseResultOut {
+    pub messages: Vec<DiameterMessageOut>,
+    pub stats: ParseStatsOut,
+}
+
 #[wasm_bindgen]
 pub fn parse_pcap_to_diameter_json(bytes: &[u8], tcp_port: u16) -> Result<JsValue, JsValue> {
     let segments =
         extract_tcp_segments(bytes, tcp_port).map_err(|e| JsValue::from_str(&format!("pcap parse error: {e}")))?;
 
+    let mut stats = ParseStatsOut::default();
+    stats.segments = segments.len();
+
     let streams = reassemble_streams(segments);
+    stats.streams = streams.len();
 
     let mut messages: Vec<DiameterMessageOut> = Vec::new();
     for (k, bufs) in streams {
+        stats.chunks += bufs.len();
         for buf in bufs {
             let mut offset = 0usize;
             while offset + 20 <= buf.len() {
+                stats.scans += 1;
                 if buf[offset] != 1 {
                     offset += 1;
                     continue;
                 }
                 let len = read_u24(&buf[offset + 1..offset + 4]) as usize;
-                if len < 20 {
+                if len < 20 || len > 131072 {
+                    stats.invalid_len += 1;
                     offset += 1;
                     continue;
                 }
                 if offset + len > buf.len() {
-                    break;
+                    stats.truncated += 1;
+                    offset += 1;
+                    continue;
                 }
                 match parse_diameter_message(&buf[offset..offset + len]) {
                     Ok((mut msg, _)) => {
@@ -42,6 +69,7 @@ pub fn parse_pcap_to_diameter_json(bytes: &[u8], tcp_port: u16) -> Result<JsValu
                         offset += len;
                     }
                     Err(_) => {
+                        stats.parse_errors += 1;
                         offset += 1;
                     }
                 }
@@ -49,7 +77,8 @@ pub fn parse_pcap_to_diameter_json(bytes: &[u8], tcp_port: u16) -> Result<JsValu
         }
     }
 
-    to_value(&messages).map_err(|e| JsValue::from_str(&format!("json error: {e}")))
+    stats.parsed = messages.len();
+    to_value(&ParseResultOut { messages, stats }).map_err(|e| JsValue::from_str(&format!("json error: {e}")))
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -177,7 +206,7 @@ fn parse_one_packet(pkt: &[u8], tcp_port: u16) -> Vec<StreamSeg> {
     if let Some(etherparse::TransportHeader::Tcp(tcp)) = ph.transport {
         let src_port = tcp.source_port;
         let dst_port = tcp.destination_port;
-        if src_port != tcp_port && dst_port != tcp_port {
+        if tcp_port != 0 && src_port != tcp_port && dst_port != tcp_port {
             return Vec::new();
         }
         let payload = ph.payload.slice().to_vec();
@@ -219,7 +248,7 @@ fn parse_sctp_data_segments(
 
     let src_port = u16::from_be_bytes([sctp[0], sctp[1]]);
     let dst_port = u16::from_be_bytes([sctp[2], sctp[3]]);
-    if src_port != diameter_port && dst_port != diameter_port {
+    if diameter_port != 0 && src_port != diameter_port && dst_port != diameter_port {
         return Vec::new();
     }
 
@@ -332,11 +361,18 @@ fn parse_diameter_message(buf: &[u8]) -> Result<(DiameterMessageOut, usize), Str
     let mut avps = Vec::new();
     let mut off = 20usize;
     while off + 8 <= buf.len() {
-        let (node, used) = parse_avp(&buf[off..])?;
-        avps.push(node);
-        off += used;
-        if off >= buf.len() {
-            break;
+        match parse_avp(&buf[off..]) {
+            Ok((node, used)) => {
+                avps.push(node);
+                off += used;
+                if off >= buf.len() {
+                    break;
+                }
+            }
+            Err(_) => {
+                // loose mode: keep message header even if some AVPs are malformed
+                break;
+            }
         }
     }
 
