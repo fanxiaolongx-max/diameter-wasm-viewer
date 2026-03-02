@@ -357,15 +357,17 @@ fn decode_avp_content(code: u32, vendor: Option<u32>, data: &[u8]) -> String {
     if vendor.is_none() {
         match code {
             263 | 264 | 296 | 293 | 283 | 444 | 30 => return as_utf8_or_hex(data),
-            258 | 278 | 415 => return as_u32_str(data),
+            278 | 415 => return as_u32_str(data),
+            258 => return decode_auth_application_id(data),
             416 => return decode_cc_request_type(data),
+            450 => return decode_subscription_id_type(data),
             8 => return decode_ipv4_addr(data),
             1021 => return decode_bearer_operation(data),
             1027 => return decode_ip_can_type(data),
             _ => {}
         }
     } else if code == 23 {
-        return as_utf8_or_hex(data);
+        return decode_3gpp_ms_timezone(data);
     }
 
     as_utf8_or_hex(data)
@@ -400,6 +402,67 @@ fn decode_cc_request_type(data: &[u8]) -> String {
         format!("{label} ({v})")
     } else {
         as_hex(data)
+    }
+}
+
+fn decode_auth_application_id(data: &[u8]) -> String {
+    if data.len() >= 4 {
+        let v = u32::from_be_bytes(data[0..4].try_into().unwrap());
+        let label = match v {
+            16777238 => "3GPP Gx",
+            _ => "UNKNOWN",
+        };
+        format!("{label} ({v})")
+    } else {
+        as_hex(data)
+    }
+}
+
+fn decode_subscription_id_type(data: &[u8]) -> String {
+    if data.len() >= 4 {
+        let v = u32::from_be_bytes(data[0..4].try_into().unwrap());
+        let label = match v {
+            0 => "END_USER_E164",
+            1 => "END_USER_IMSI",
+            2 => "END_USER_SIP_URI",
+            3 => "END_USER_NAI",
+            4 => "END_USER_PRIVATE",
+            _ => "UNKNOWN",
+        };
+        format!("{label} ({v})")
+    } else {
+        as_hex(data)
+    }
+}
+
+fn decode_3gpp_ms_timezone(data: &[u8]) -> String {
+    if data.len() >= 2 {
+        let tz = data[0];
+        let dst = data[1] & 0b11;
+
+        let low = tz & 0x0F;
+        let high = (tz >> 4) & 0x07;
+        let qh = (high as u16) * 10 + (low as u16); // quarter-hours in BCD
+        let sign_negative = (tz & 0x08) != 0;
+
+        let total_minutes = (qh as i32) * 15;
+        let signed_minutes = if sign_negative { -total_minutes } else { total_minutes };
+        let hours = signed_minutes.abs() / 60;
+        let minutes = signed_minutes.abs() % 60;
+
+        let dst_text = match dst {
+            0 => "No adjustment",
+            1 => "+1 hour adjustment",
+            2 => "+2 hours adjustment",
+            _ => "Reserved adjustment",
+        };
+
+        let sign = if sign_negative { "-" } else { "+" };
+        format!(
+            "Timezone: GMT {sign} {hours} hours {minutes} minutes {dst_text}"
+        )
+    } else {
+        as_utf8_or_hex(data)
     }
 }
 
