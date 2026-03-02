@@ -138,6 +138,23 @@ function setError(msg){
   $("#errBox").textContent = msg || "";
 }
 
+function renderParseLog(){
+  const box = $("#parseLog");
+  if (!box) return;
+  const lines = [];
+  lines.push(`parsed_messages=${allMsgs.length}`);
+  lines.push(`filtered_messages=${filtered.length}`);
+  lines.push("");
+  allMsgs.forEach((m, i) => {
+    lines.push(
+      `#${i} ${m.app_name || "-"} ${m.msg_type || "-"} cmd=${m.cmd_code} ` +
+      `${m.src_ip || "-"}:${m.src_port || 0} -> ${m.dst_ip || "-"}:${m.dst_port || 0} ` +
+      `seq=${m.msg_seq || "-"} flags=${m.flags || "-"}`
+    );
+  });
+  box.textContent = lines.join("\n");
+}
+
 function applyFilter(){
   try {
     const fn = compileFilter($("#filterExpr").value);
@@ -147,6 +164,7 @@ function applyFilter(){
     renderList();
     if (selected >= 0) renderTree();
     extractRows();
+    renderParseLog();
     setError("");
   } catch (e) {
     setError(`过滤失败：${e?.message || e}`);
@@ -190,6 +208,7 @@ $("#pcapFile").addEventListener("change", async (e)=>{
     renderList();
     $("#tblBody").innerHTML = "";
     $("#kpi").textContent = "总消息：0，过滤后：0";
+    renderParseLog();
     setError(`解析失败：${err?.message || err}`);
   }
 });
@@ -202,3 +221,5 @@ function escapeHtml(s){
     .replaceAll('"',"&quot;")
     .replaceAll("'","&#39;");
 }
+
+renderParseLog();
