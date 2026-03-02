@@ -130,34 +130,63 @@ function extractRows(){
   `).join("");
 }
 
+function setError(msg){
+  $("#errBox").textContent = msg || "";
+}
+
 function applyFilter(){
-  const fn = compileFilter($("#filterExpr").value);
-  filtered = allMsgs.filter(fn);
-  selected = filtered.length ? 0 : -1;
-  $("#kpi").textContent = `总消息：${allMsgs.length}，过滤后：${filtered.length}`;
-  renderList();
-  if (selected >= 0) renderTree();
-  extractRows();
+  try {
+    const fn = compileFilter($("#filterExpr").value);
+    filtered = allMsgs.filter(fn);
+    selected = filtered.length ? 0 : -1;
+    $("#kpi").textContent = `总消息：${allMsgs.length}，过滤后：${filtered.length}`;
+    renderList();
+    if (selected >= 0) renderTree();
+    extractRows();
+    setError("");
+  } catch (e) {
+    setError(`过滤失败：${e?.message || e}`);
+  }
 }
 
 $("#btnApply").addEventListener("click", applyFilter);
 
 $("#btnExport").addEventListener("click", ()=>{
-  if (!extractedRows.length) return alert("无可导出的数据");
-  const wb = XLSX.utils.book_new();
-  const sheet = XLSX.utils.json_to_sheet(extractedRows, { header: ["Index","Path","AVP Name","AVP Content","AVP Flags"] });
-  XLSX.utils.book_append_sheet(wb, sheet, "Extracted AVPs");
-  XLSX.writeFile(wb, `diameter_extract_${Date.now()}.xlsx`);
+  try {
+    if (!extractedRows.length) return alert("无可导出的数据");
+    const wb = XLSX.utils.book_new();
+    const sheet = XLSX.utils.json_to_sheet(extractedRows, { header: ["Index","Path","AVP Name","AVP Content","AVP Flags"] });
+    XLSX.utils.book_append_sheet(wb, sheet, "Extracted AVPs");
+    XLSX.writeFile(wb, `diameter_extract_${Date.now()}.xlsx`);
+    setError("");
+  } catch (e) {
+    setError(`导出失败：${e?.message || e}`);
+  }
 });
 
 $("#pcapFile").addEventListener("change", async (e)=>{
   const f = e.target.files?.[0];
   if (!f) return;
-  await init();
-  const port = parseInt($("#tcpPort").value, 10) || 3868;
-  const buf = new Uint8Array(await f.arrayBuffer());
-  allMsgs = parse_pcap_to_diameter_json(buf, port);
-  applyFilter();
+  try {
+    setError("");
+    await init();
+    const port = parseInt($("#tcpPort").value, 10) || 3868;
+    const buf = new Uint8Array(await f.arrayBuffer());
+    const parsed = parse_pcap_to_diameter_json(buf, port);
+    if (!Array.isArray(parsed)) {
+      throw new Error("WASM 返回结果异常（非数组）");
+    }
+    allMsgs = parsed;
+    applyFilter();
+  } catch (err) {
+    allMsgs = [];
+    filtered = [];
+    selected = -1;
+    renderList();
+    $("#tblBody").innerHTML = "";
+    $("#kpi").textContent = "总消息：0，过滤后：0";
+    setError(`解析失败：${err?.message || err}`);
+  }
 });
 
 function escapeHtml(s){
