@@ -61,9 +61,9 @@ pub struct AvpNodeOut {
 }
 
 #[derive(Debug, Clone)]
-struct TcpSeg {
+struct StreamSeg {
     key: FlowKey,
-    seq: u32,
+    order: u32,
     payload: Vec<u8>,
 }
 
@@ -73,9 +73,11 @@ struct FlowKey {
     a_port: u16,
     b_ip: [u8; 4],
     b_port: u16,
+    l4_proto: u8,      // 6=tcp, 132=sctp
+    sctp_stream: u16,  // tcp uses 0
 }
 
-fn extract_tcp_segments(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, String> {
+fn extract_tcp_segments(bytes: &[u8], tcp_port: u16) -> Result<Vec<StreamSeg>, String> {
     if looks_like_pcapng(bytes) {
         extract_from_pcapng(bytes, tcp_port)
     } else {
@@ -87,7 +89,7 @@ fn looks_like_pcapng(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && bytes[0..4] == [0x0A, 0x0D, 0x0D, 0x0A]
 }
 
-fn extract_from_pcapng(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, String> {
+fn extract_from_pcapng(bytes: &[u8], tcp_port: u16) -> Result<Vec<StreamSeg>, String> {
     let mut reader = PcapNGReader::new(65536, bytes).map_err(|e| format!("{e:?}"))?;
     let mut out = Vec::new();
 
@@ -96,9 +98,8 @@ fn extract_from_pcapng(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, Strin
             Ok((offset, block)) => {
                 if let PcapBlockOwned::NG(block) = block {
                     if let pcap_parser::Block::EnhancedPacket(epb) = block {
-                        if let Some(seg) = parse_one_packet(epb.data, tcp_port) {
-                            out.push(seg);
-                        }
+                        let segs = parse_one_packet(epb.data, tcp_port);
+                        out.extend(segs);
                     }
                 }
                 reader.consume(offset);
@@ -111,7 +112,7 @@ fn extract_from_pcapng(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, Strin
     Ok(out)
 }
 
-fn extract_from_pcap(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, String> {
+fn extract_from_pcap(bytes: &[u8], tcp_port: u16) -> Result<Vec<StreamSeg>, String> {
     let mut reader = LegacyPcapReader::new(65536, bytes).map_err(|e| format!("{e:?}"))?;
     let mut out = Vec::new();
 
@@ -119,9 +120,8 @@ fn extract_from_pcap(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, String>
         match reader.next() {
             Ok((offset, block)) => {
                 if let PcapBlockOwned::Legacy(b) = block {
-                    if let Some(seg) = parse_one_packet(b.data, tcp_port) {
-                        out.push(seg);
-                    }
+                    let segs = parse_one_packet(b.data, tcp_port);
+                    out.extend(segs);
                 }
                 reader.consume(offset);
             }
@@ -133,71 +133,137 @@ fn extract_from_pcap(bytes: &[u8], tcp_port: u16) -> Result<Vec<TcpSeg>, String>
     Ok(out)
 }
 
-fn parse_one_packet(pkt: &[u8], tcp_port: u16) -> Option<TcpSeg> {
-    let ph = PacketHeaders::from_ethernet_slice(pkt).ok()?;
-
-    let (src_ip, dst_ip) = match ph.net? {
-        etherparse::NetHeaders::Ipv4(h, _) => (h.source, h.destination),
-        _ => return None,
+fn parse_one_packet(pkt: &[u8], tcp_port: u16) -> Vec<StreamSeg> {
+    let ph = match PacketHeaders::from_ethernet_slice(pkt) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
     };
 
-    let tcp = match ph.transport? {
-        etherparse::TransportHeader::Tcp(t) => t,
-        _ => return None,
+    let (ip4, ip_proto) = match ph.net {
+        Some(etherparse::NetHeaders::Ipv4(h, _)) => {
+            let proto = h.protocol.0;
+            (h, proto)
+        }
+        _ => return Vec::new(),
     };
+    let src_ip = ip4.source;
+    let dst_ip = ip4.destination;
 
-    let src_port = tcp.source_port;
-    let dst_port = tcp.destination_port;
-    if src_port != tcp_port && dst_port != tcp_port {
-        return None;
+    if let Some(etherparse::TransportHeader::Tcp(tcp)) = ph.transport {
+        let src_port = tcp.source_port;
+        let dst_port = tcp.destination_port;
+        if src_port != tcp_port && dst_port != tcp_port {
+            return Vec::new();
+        }
+        let payload = ph.payload.slice().to_vec();
+        if payload.is_empty() {
+            return Vec::new();
+        }
+        return vec![StreamSeg {
+            key: FlowKey {
+                a_ip: src_ip,
+                a_port: src_port,
+                b_ip: dst_ip,
+                b_port: dst_port,
+                l4_proto: 6,
+                sctp_stream: 0,
+            },
+            order: tcp.sequence_number,
+            payload,
+        }];
     }
 
-    let payload = ph.payload.slice().to_vec();
-    if payload.is_empty() {
-        return None;
+    // SCTP: parse DATA chunks and keep only Diameter PPID(46)
+    if ip_proto == 132 {
+        let sctp_bytes = ph.payload.slice();
+        return parse_sctp_data_segments(sctp_bytes, src_ip, dst_ip, tcp_port);
     }
 
-    Some(TcpSeg {
-        key: FlowKey {
-            a_ip: src_ip,
-            a_port: src_port,
-            b_ip: dst_ip,
-            b_port: dst_port,
-        },
-        seq: tcp.sequence_number,
-        payload,
-    })
+    Vec::new()
 }
 
-fn reassemble_streams(segs: Vec<TcpSeg>) -> HashMap<FlowKey, Vec<Vec<u8>>> {
-    let mut grouped: HashMap<FlowKey, Vec<TcpSeg>> = HashMap::new();
+fn parse_sctp_data_segments(
+    sctp: &[u8],
+    src_ip: [u8; 4],
+    dst_ip: [u8; 4],
+    diameter_port: u16,
+) -> Vec<StreamSeg> {
+    if sctp.len() < 12 {
+        return Vec::new();
+    }
+
+    let src_port = u16::from_be_bytes([sctp[0], sctp[1]]);
+    let dst_port = u16::from_be_bytes([sctp[2], sctp[3]]);
+    if src_port != diameter_port && dst_port != diameter_port {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut off = 12usize;
+    while off + 4 <= sctp.len() {
+        let chunk_type = sctp[off];
+        let chunk_len = u16::from_be_bytes([sctp[off + 2], sctp[off + 3]]) as usize;
+        if chunk_len < 4 || off + chunk_len > sctp.len() {
+            break;
+        }
+
+        if chunk_type == 0 && chunk_len >= 16 {
+            let tsn = u32::from_be_bytes([sctp[off + 4], sctp[off + 5], sctp[off + 6], sctp[off + 7]]);
+            let stream_id = u16::from_be_bytes([sctp[off + 8], sctp[off + 9]]);
+            let ppid = u32::from_be_bytes([sctp[off + 12], sctp[off + 13], sctp[off + 14], sctp[off + 15]]);
+            let user_data = &sctp[off + 16..off + chunk_len];
+
+            if ppid == 46 && !user_data.is_empty() {
+                out.push(StreamSeg {
+                    key: FlowKey {
+                        a_ip: src_ip,
+                        a_port: src_port,
+                        b_ip: dst_ip,
+                        b_port: dst_port,
+                        l4_proto: 132,
+                        sctp_stream: stream_id,
+                    },
+                    order: tsn,
+                    payload: user_data.to_vec(),
+                });
+            }
+        }
+
+        off += ((chunk_len + 3) / 4) * 4;
+    }
+
+    out
+}
+
+fn reassemble_streams(segs: Vec<StreamSeg>) -> HashMap<FlowKey, Vec<Vec<u8>>> {
+    let mut grouped: HashMap<FlowKey, Vec<StreamSeg>> = HashMap::new();
     for s in segs {
         grouped.entry(s.key.clone()).or_default().push(s);
     }
 
     let mut out: HashMap<FlowKey, Vec<Vec<u8>>> = HashMap::new();
     for (k, mut v) in grouped {
-        v.sort_by_key(|s| s.seq);
+        v.sort_by_key(|s| s.order);
 
         let mut chunks: Vec<Vec<u8>> = Vec::new();
         let mut current: Vec<u8> = Vec::new();
-        let mut expected_seq: Option<u32> = None;
+        let mut expected_order: Option<u32> = None;
 
         for s in v {
-            match expected_seq {
+            match expected_order {
                 None => {
                     current.extend_from_slice(&s.payload);
-                    expected_seq = Some(s.seq.wrapping_add(s.payload.len() as u32));
+                    expected_order = Some(s.order.wrapping_add(s.payload.len() as u32));
                 }
-                Some(exp) if s.seq == exp => {
+                Some(exp) if s.order == exp => {
                     current.extend_from_slice(&s.payload);
-                    expected_seq = Some(exp.wrapping_add(s.payload.len() as u32));
+                    expected_order = Some(exp.wrapping_add(s.payload.len() as u32));
                 }
-                Some(exp) if s.seq < exp => {
-                    let overlap = (exp - s.seq) as usize;
+                Some(exp) if s.order < exp => {
+                    let overlap = (exp - s.order) as usize;
                     if overlap < s.payload.len() {
                         current.extend_from_slice(&s.payload[overlap..]);
-                        expected_seq = Some(exp.wrapping_add((s.payload.len() - overlap) as u32));
+                        expected_order = Some(exp.wrapping_add((s.payload.len() - overlap) as u32));
                     }
                 }
                 Some(_) => {
@@ -205,7 +271,7 @@ fn reassemble_streams(segs: Vec<TcpSeg>) -> HashMap<FlowKey, Vec<Vec<u8>>> {
                         chunks.push(std::mem::take(&mut current));
                     }
                     current.extend_from_slice(&s.payload);
-                    expected_seq = Some(s.seq.wrapping_add(s.payload.len() as u32));
+                    expected_order = Some(s.order.wrapping_add(s.payload.len() as u32));
                 }
             }
         }
