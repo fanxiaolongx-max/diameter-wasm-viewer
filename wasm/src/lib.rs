@@ -22,13 +22,24 @@ pub fn parse_pcap_to_diameter_json(bytes: &[u8], tcp_port: u16) -> Result<JsValu
                     continue;
                 }
                 let len = read_u24(&buf[offset + 1..offset + 4]) as usize;
-                if len < 20 || offset + len > buf.len() {
+                if len < 20 {
+                    offset += 1;
+                    continue;
+                }
+                if offset + len > buf.len() {
+                    // likely truncated tail in this chunk
                     break;
                 }
-                if let Ok((msg, _)) = parse_diameter_message(&buf[offset..offset + len]) {
-                    messages.push(msg);
+                match parse_diameter_message(&buf[offset..offset + len]) {
+                    Ok((msg, _)) => {
+                        messages.push(msg);
+                        offset += len;
+                    }
+                    Err(_) => {
+                        // re-sync scan to next possible Diameter version byte
+                        offset += 1;
+                    }
                 }
-                offset += len;
             }
         }
     }
@@ -424,6 +435,15 @@ fn avp_name(code: u32, vendor: Option<u32>) -> String {
         .to_string();
     }
 
+    if vendor == Some(10415) {
+        return match code {
+            1021 => "Bearer-Operation".to_string(),
+            1027 => "IP-CAN-Type".to_string(),
+            23 => "3GPP-MS-TimeZone".to_string(),
+            _ => format!("3GPP-AVP-{code}"),
+        };
+    }
+
     if code == 23 {
         return "3GPP-MS-TimeZone".to_string();
     }
@@ -442,6 +462,13 @@ fn decode_avp_content(code: u32, vendor: Option<u32>, data: &[u8]) -> String {
             8 => return decode_ipv4_addr(data),
             1021 => return decode_bearer_operation(data),
             1027 => return decode_ip_can_type(data),
+            _ => {}
+        }
+    } else if vendor == Some(10415) {
+        match code {
+            1021 => return decode_bearer_operation(data),
+            1027 => return decode_ip_can_type(data),
+            23 => return decode_3gpp_ms_timezone(data),
             _ => {}
         }
     } else if code == 23 {
@@ -548,6 +575,7 @@ fn decode_bearer_operation(data: &[u8]) -> String {
     if data.len() >= 4 {
         let v = u32::from_be_bytes(data[0..4].try_into().unwrap());
         let label = match v {
+            0 => "TERMINATION",
             1 => "ESTABLISHMENT",
             2 => "MODIFICATION",
             3 => "TERMINATION",

@@ -94,10 +94,11 @@ function extractRows(){
   const wantedSet = new Set(wanted);
   const rows = [];
 
-  function walk(a, pathArr, idx){
+  function walk(a, pathArr, idx, depth){
     const here = a.name || "";
     const newPath = pathArr.concat(here).filter(Boolean);
-    const hit = wantedSet.has(here) || pathArr.some(p => wantedSet.has(p));
+    const parentHit = pathArr.some(p => wantedSet.has(p));
+    const hit = wantedSet.has(here) || parentHit;
     if (hit){
       rows.push({
         Index: idx,
@@ -105,12 +106,13 @@ function extractRows(){
         "AVP Name": here,
         "AVP Content": a.content || "",
         "AVP Flags": a.flags || "",
+        _depth: depth || 0,
       });
     }
-    for (const c of (a.children||[])) walk(c, newPath, idx);
+    for (const c of (a.children||[])) walk(c, newPath, idx, (depth || 0) + 1);
   }
 
-  filtered.forEach((m, idx) => (m.avps||[]).forEach(a => walk(a, [], idx)));
+  filtered.forEach((m, idx) => (m.avps||[]).forEach(a => walk(a, [], idx, 0)));
   extractedRows = rows;
 
   const body = $("#tblBody");
@@ -123,7 +125,7 @@ function extractRows(){
     <tr>
       <td>${escapeHtml(String(r.Index))}</td>
       <td class="muted">${escapeHtml(r.Path)}</td>
-      <td>${escapeHtml(r["AVP Name"])}</td>
+      <td style="padding-left:${10 + (r._depth||0)*18}px">${escapeHtml(r["AVP Name"])}</td>
       <td>${escapeHtml(r["AVP Content"])}</td>
       <td>${escapeHtml(r["AVP Flags"])}</td>
     </tr>
