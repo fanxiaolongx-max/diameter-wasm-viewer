@@ -1,5 +1,10 @@
 const $ = (s) => document.querySelector(s);
 
+function getBase() {
+  const v = $("#apiBase")?.value?.trim();
+  return (v ? v : window.location.origin).replace(/\/$/, "");
+}
+
 let sessionId = null;
 let packets = [];
 let active = -1;
@@ -9,7 +14,7 @@ $("#btnRefresh").addEventListener("click", refreshPackets);
 
 async function uploadAndParse() {
   const file = $("#pcapFile").files?.[0];
-  const base = $("#apiBase").value.trim().replace(/\/$/, "");
+  const base = getBase();
   const port = $("#port").value.trim();
   if (!file) return setError("Select a .pcap/.pcapng file first.");
 
@@ -37,7 +42,7 @@ async function uploadAndParse() {
 
 async function refreshPackets() {
   if (!sessionId) return;
-  const base = $("#apiBase").value.trim().replace(/\/$/, "");
+  const base = getBase();
   const filter = $("#filter").value.trim();
 
   try {
@@ -89,7 +94,7 @@ function renderList() {
 async function loadPacketDetail(listIndex) {
   const pkt = packets[listIndex];
   if (!pkt) return;
-  const base = $("#apiBase").value.trim().replace(/\/$/, "");
+  const base = getBase();
 
   try {
     const r = await fetch(`${base}/api/sessions/${sessionId}/packet/${pkt.index}`);

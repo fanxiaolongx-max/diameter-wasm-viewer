@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const app = express();
 const upload = multer({ dest: path.join(os.tmpdir(), "diameter-viewer-upload") });
@@ -15,6 +16,15 @@ app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
 const sessions = new Map();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const webDir = path.resolve(__dirname, "../../web");
+const wasmDir = path.resolve(__dirname, "../../wasm");
+
+app.use("/web", express.static(webDir));
+app.use("/wasm", express.static(wasmDir));
+app.get("/", (_req, res) => res.redirect("/web/backend.html"));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, sessions: sessions.size });
