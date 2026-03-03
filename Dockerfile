@@ -33,6 +33,10 @@ RUN mkdir -p /captures /usr/local/bin /usr/local/share/wireshark/ \
 
 COPY --from=intermediate /usr/src/wireshark/build/run/sharkd /usr/local/bin/sharkd
 COPY --from=intermediate /usr/src/wireshark/build/run/colorfilters /usr/local/share/wireshark/colorfilters
+COPY --from=intermediate /usr/src/wireshark/build/run/libwireshark.so* /usr/local/lib/
+COPY --from=intermediate /usr/src/wireshark/build/run/libwiretap.so* /usr/local/lib/
+COPY --from=intermediate /usr/src/wireshark/build/run/libwsutil.so* /usr/local/lib/
+RUN ldconfig
 
 ENV CAPTURES_PATH=/captures/
 ENV SHARKD_SOCKET=/captures/sharkd.sock

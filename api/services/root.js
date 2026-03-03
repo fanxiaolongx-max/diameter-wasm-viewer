@@ -35,7 +35,7 @@ module.exports = function (fastify, opts, next) {
         let results = {"files":[], "pwd": "."};
         let loaded_files = sharkd_dict.get_loaded_sockets();
         files.forEach( async function(pcap_file){
-          if (pcap_file.endsWith('.pcap')) {
+          if (pcap_file.endsWith('.pcap') || pcap_file.endsWith('.pcapng')) {
             /* fetch URLs to local folder */
 	    if(pcap_file.match(url_re)) {
 		  const res = await fetch(pcap_file);
