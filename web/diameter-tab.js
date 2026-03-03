@@ -15,7 +15,8 @@
     flowsRows: null,
     menuInjectObserver: null,
     frameMetaCache: new Map(),
-    suppressFrameSyncUntil: 0
+    suppressFrameSyncUntil: 0,
+    freezeFrameSyncWhileFlowsOpen: false
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -142,7 +143,12 @@
 
     const frame = getCurrentFrame()
     const now = Date.now()
-    if (frame && STATE.frameInput && now >= STATE.suppressFrameSyncUntil) {
+    if (
+      frame &&
+      STATE.frameInput &&
+      now >= STATE.suppressFrameSyncUntil &&
+      !STATE.freezeFrameSyncWhileFlowsOpen
+    ) {
       STATE.frameInput.value = frame
     }
 
@@ -243,6 +249,7 @@
   }
 
   function scheduleAutoLoad() {
+    if (STATE.freezeFrameSyncWhileFlowsOpen) return
     const key = currentKey()
     if (!key || key === STATE.lastLoadedKey) return
     clearTimeout(STATE.autoLoadTimer)
@@ -475,9 +482,11 @@
       STATE.flowsModal.parentNode.removeChild(STATE.flowsModal)
     }
     STATE.flowsModal = null
+    STATE.freezeFrameSyncWhileFlowsOpen = false
   }
 
   function showFlowsLoadingModal(text = 'Building Diameter Flows...', ratio = null) {
+    STATE.freezeFrameSyncWhileFlowsOpen = true
     if (!STATE.flowsModal) {
       const modal = document.createElement('div')
       modal.style.cssText = [
@@ -516,6 +525,7 @@
 
   function renderDiameterFlows(rows) {
     closeFlowsModal()
+    STATE.freezeFrameSyncWhileFlowsOpen = true
 
     const modal = document.createElement('div')
     modal.style.cssText = [
