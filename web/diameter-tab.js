@@ -1682,17 +1682,9 @@
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener(
-      'DOMContentLoaded',
-      () => {
-        installNetworkProgressHint()
-        installMenuInjector()
-      },
-      { once: true }
-    )
+    document.addEventListener('DOMContentLoaded', () => installNetworkProgressHint(), { once: true })
   } else {
     installNetworkProgressHint()
-    installMenuInjector()
   }
 
   // Do NOT auto-open DIAMETER panel on WebShark home.
