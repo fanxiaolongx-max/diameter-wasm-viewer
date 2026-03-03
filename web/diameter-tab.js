@@ -23,7 +23,8 @@
     currentCapture: '',
     currentFrame: '',
     flowsEditMode: false,
-    flowsSelectedIndex: -1
+    flowsSelectedIndex: -1,
+    flowsCache: new Map()
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -157,6 +158,7 @@
       customLabel: text.trim() || 'DIAMETER'
     })
     STATE.flowsSelectedIndex = STATE.flowsRows.length - 1
+    if (STATE.currentCapture) STATE.flowsCache.set(STATE.currentCapture, STATE.flowsRows)
     renderDiameterFlows(STATE.flowsRows)
   }
 
@@ -184,6 +186,7 @@
       frame: Number(frame) || '',
       customLabel: text.trim() || 'DIAMETER'
     }
+    if (STATE.currentCapture) STATE.flowsCache.set(STATE.currentCapture, rows)
     renderDiameterFlows(rows)
   }
 
@@ -193,7 +196,40 @@
     if (i < 0 || i >= rows.length) return
     rows.splice(i, 1)
     STATE.flowsSelectedIndex = Math.min(i, rows.length - 1)
+    if (STATE.currentCapture) STATE.flowsCache.set(STATE.currentCapture, rows)
     renderDiameterFlows(rows)
+  }
+
+  function formatSecondsToClock(v) {
+    const n = Number(v)
+    if (!Number.isFinite(n)) return ''
+    const h = Math.floor(n / 3600)
+    const m = Math.floor((n % 3600) / 60)
+    const s = Math.floor(n % 60)
+    const ms = Math.round((n - Math.floor(n)) * 1000)
+    const hh = String(h).padStart(2, '0')
+    const mm = String(m).padStart(2, '0')
+    const ss = String(s).padStart(2, '0')
+    const mss = String(ms).padStart(3, '0')
+    return `${hh}:${mm}:${ss}.${mss}`
+  }
+
+  function enhanceWebsharkTimeColumn() {
+    const rows = document.querySelectorAll('table tr, [role="row"]')
+    rows.forEach(tr => {
+      const cells = tr.querySelectorAll('td, [role="gridcell"]')
+      if (!cells || cells.length < 2) return
+      const timeCell = cells[1]
+      if (!timeCell || timeCell.getAttribute('data-dia-timefmt') === '1') return
+      const raw = (timeCell.textContent || '').trim()
+      if (!/^\d+(\.\d+)?$/.test(raw)) return
+
+      const fmt = formatSecondsToClock(raw)
+      if (!fmt) return
+      timeCell.setAttribute('data-dia-timefmt', '1')
+      timeCell.setAttribute('title', `${raw}s`)
+      timeCell.textContent = fmt
+    })
   }
 
   function tryGetCaptureFromUrl() {
@@ -941,12 +977,27 @@
     await tryAutofillCaptureFromServer()
 
     const capture = (STATE.captureInput.value || '').trim()
+    STATE.currentCapture = capture
     if (!capture) {
       STATE.status.textContent = '请先选择 capture 后再打开 Diameter Flows'
       return
     }
 
     STATE.status.textContent = 'Building Diameter Flows...'
+
+    const cached = STATE.flowsCache.get(capture)
+    if (cached && Array.isArray(cached) && cached.length) {
+      STATE.flowsRows = cached
+      STATE.flowsSelectedIndex = -1
+      renderDiameterFlows(cached)
+      if (cached[0]) {
+        if (STATE.frameInput) STATE.frameInput.value = String(cached[0].frame)
+        loadDiameter({ auto: false, keepTable: false, skipSync: true })
+      }
+      STATE.status.textContent = `Diameter Flows ready (${cached.length} messages, cached)`
+      return
+    }
+
     showFlowsLoadingModal('Building Diameter Flows...', 0.12)
 
     try {
@@ -983,6 +1034,7 @@
 
       STATE.flowsRows = enriched
       STATE.flowsSelectedIndex = -1
+      STATE.flowsCache.set(capture, enriched)
       renderDiameterFlows(enriched)
 
       // auto-show panel and load first message as requested
@@ -1119,7 +1171,9 @@
 
     window.fetch = async (...args) => {
       const url = args[0]
-      const hit = String(url || '').includes('/webshark/')
+      const u = String(url || '')
+      const hit = u.includes('/webshark/')
+      const isUpload = u.includes('/webshark/upload')
       let msg = ''
       if (hit) {
         pending += 1
@@ -1128,8 +1182,13 @@
         if (t) t.textContent = pending > 1 ? `${msg} (${pending})` : msg
         box.style.display = 'flex'
       }
+      let resp
       try {
-        return await origFetch(...args)
+        resp = await origFetch(...args)
+        if (isUpload && resp && resp.ok) {
+          STATE.flowsCache.clear()
+        }
+        return resp
       } finally {
         if (hit) {
           pending = Math.max(0, pending - 1)
@@ -1242,6 +1301,7 @@
     const filterTimer = setInterval(() => {
       filterTry += 1
       const ok = applyDefaultDisplayFilter()
+      enhanceWebsharkTimeColumn()
       if (ok || filterTry >= 40) clearInterval(filterTimer)
     }, 300)
 
@@ -1271,6 +1331,7 @@
       if (changed) scheduleAutoLoad()
       applyDefaultDisplayFilter()
       tryInjectDiameterFlowsMenu()
+      enhanceWebsharkTimeColumn()
     })
     mo.observe(document.body, {
       subtree: true,
