@@ -1358,11 +1358,34 @@
     if (!document.getElementById('dia-net-style')) {
       const st = document.createElement('style')
       st.id = 'dia-net-style'
-      st.textContent = '@keyframes diaPulse{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}'
+      st.textContent = '@keyframes diaPulse{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}@keyframes diaBarMove{0%{transform:translateX(-80%)}100%{transform:translateX(260%)}}'
       document.head.appendChild(st)
     }
 
+    const openOverlay = document.createElement('div')
+    openOverlay.id = 'dia-open-overlay'
+    openOverlay.style.cssText = [
+      'position:fixed',
+      'inset:0',
+      'z-index:100001',
+      'display:none',
+      'align-items:center',
+      'justify-content:center',
+      'pointer-events:none',
+      'background:rgba(0,0,0,.16)'
+    ].join(';')
+    openOverlay.innerHTML = `
+      <div style="width:min(440px,84vw);background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);padding:12px 14px;">
+        <div id="dia-open-text" style="font-size:13px;color:#222;margin-bottom:10px;">正在打开文件并加载消息列表...</div>
+        <div style="height:8px;background:#eceff1;border-radius:999px;overflow:hidden;">
+          <div style="height:100%;width:45%;background:#3f51b5;animation:diaBarMove 1.1s linear infinite;"></div>
+        </div>
+      </div>
+    `
+    document.body.appendChild(openOverlay)
+
     let pending = 0
+    let pendingOpen = 0
     const origFetch = window.fetch.bind(window)
     function classify(url) {
       const u = String(url || '')
@@ -1378,6 +1401,7 @@
       const u = String(url || '')
       const hit = u.includes('/webshark/')
       const isUpload = u.includes('/webshark/upload')
+      const isOpenFrames = u.includes('method=frames') && !u.includes('filter=')
       let msg = ''
       if (hit) {
         pending += 1
@@ -1385,6 +1409,12 @@
         const t = box.querySelector('#dia-net-text')
         if (t) t.textContent = pending > 1 ? `${msg} (${pending})` : msg
         box.style.display = 'flex'
+      }
+      if (isOpenFrames) {
+        pendingOpen += 1
+        const t2 = openOverlay.querySelector('#dia-open-text')
+        if (t2) t2.textContent = '正在打开文件并加载消息列表...'
+        openOverlay.style.display = 'flex'
       }
       let resp
       try {
@@ -1397,9 +1427,11 @@
       } finally {
         if (hit) {
           pending = Math.max(0, pending - 1)
-          if (pending === 0) {
-            box.style.display = 'none'
-          }
+          if (pending === 0) box.style.display = 'none'
+        }
+        if (isOpenFrames) {
+          pendingOpen = Math.max(0, pendingOpen - 1)
+          if (pendingOpen === 0) openOverlay.style.display = 'none'
         }
       }
     }
@@ -1592,6 +1624,12 @@
     }
 
     STATE.mounted = true
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => installNetworkProgressHint(), { once: true })
+  } else {
+    installNetworkProgressHint()
   }
 
   setTimeout(mount, 800)
