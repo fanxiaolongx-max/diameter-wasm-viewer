@@ -18,7 +18,12 @@
     suppressFrameSyncUntil: 0,
     freezeFrameSyncWhileFlowsOpen: false,
     reopenBtn: null,
-    netIndicator: null
+    netIndicator: null,
+    currentRows: [],
+    currentCapture: '',
+    currentFrame: '',
+    flowsEditMode: false,
+    flowsSelectedIndex: -1
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -64,6 +69,131 @@
       m[ip] = v
     }
     saveIpAliasMap(m)
+  }
+
+  function downloadText(filename, text, contentType = 'text/plain;charset=utf-8') {
+    const blob = new Blob([String(text || '')], { type: contentType })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 600)
+  }
+
+  function csvCell(v) {
+    const s = String(v == null ? '' : v)
+    return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s
+  }
+
+  function rowDisplayLabel(r) {
+    if (r && r.customLabel) return String(r.customLabel)
+    return normalizeDiameterLabel(r && r.info, r && r.ccRequestType)
+  }
+
+  function exportAvpCsv() {
+    const rows = Array.isArray(STATE.currentRows) ? STATE.currentRows : []
+    if (!rows.length) return
+    const head = ['AVP Name', 'AVP Content', 'AVP Flags']
+    const lines = [head.join(',')]
+    rows.forEach(r => {
+      lines.push([csvCell(r.avpName), csvCell(r.avpContent), csvCell(r.avpFlags)].join(','))
+    })
+    const base = `diameter_avp_${STATE.currentCapture || 'capture'}_f${STATE.currentFrame || 'x'}.csv`
+    downloadText(base, lines.join('\n'), 'text/csv;charset=utf-8')
+  }
+
+  function exportAvpTxt() {
+    const rows = Array.isArray(STATE.currentRows) ? STATE.currentRows : []
+    if (!rows.length) return
+    const out = []
+    out.push(`Capture: ${STATE.currentCapture || ''}`)
+    out.push(`Frame: ${STATE.currentFrame || ''}`)
+    out.push('')
+    rows.forEach((r, i) => {
+      out.push(`${i + 1}. ${r.avpName || ''}`)
+      out.push(`   Content: ${r.avpContent || ''}`)
+      out.push(`   Flags: ${r.avpFlags || ''}`)
+    })
+    const base = `diameter_avp_${STATE.currentCapture || 'capture'}_f${STATE.currentFrame || 'x'}.txt`
+    downloadText(base, out.join('\n'))
+  }
+
+  function exportFlowsTxt() {
+    const rows = Array.isArray(STATE.flowsRows) ? STATE.flowsRows : []
+    if (!rows.length) return
+    const out = []
+    out.push('Diameter Flows (editable projection, no pcap changes)')
+    out.push(`Capture: ${STATE.currentCapture || ''}`)
+    out.push('')
+    rows.forEach((r, i) => {
+      out.push(`${i + 1}. ${r.src} -> ${r.dst} : ${rowDisplayLabel(r)} (#${r.frame || ''})`)
+      if (r.sessionId) out.push(`   Session-Id: ${r.sessionId}`)
+    })
+    downloadText(`diameter_flows_${STATE.currentCapture || 'capture'}.txt`, out.join('\n'))
+  }
+
+  function addFlowRow() {
+    const src = window.prompt('Source IP', 'PCEF')
+    if (src == null) return
+    const dst = window.prompt('Destination IP', 'OCS')
+    if (dst == null) return
+    const text = window.prompt('Message text', 'CCR-(INITIAL_REQUEST (1))')
+    if (text == null) return
+    const sid = window.prompt('Session-Id (optional)', '')
+    if (sid == null) return
+    const frame = window.prompt('Frame number (optional)', '')
+    if (frame == null) return
+
+    STATE.flowsRows.push({
+      src: src.trim(),
+      dst: dst.trim(),
+      frame: Number(frame) || '',
+      info: '',
+      sessionId: sid.trim(),
+      ccRequestType: '',
+      customLabel: text.trim() || 'DIAMETER'
+    })
+    STATE.flowsSelectedIndex = STATE.flowsRows.length - 1
+    renderDiameterFlows(STATE.flowsRows)
+  }
+
+  function editSelectedFlowRow() {
+    const i = STATE.flowsSelectedIndex
+    const rows = STATE.flowsRows || []
+    if (i < 0 || i >= rows.length) return
+    const r = rows[i]
+    const src = window.prompt('Source IP', r.src || '')
+    if (src == null) return
+    const dst = window.prompt('Destination IP', r.dst || '')
+    if (dst == null) return
+    const text = window.prompt('Message text', rowDisplayLabel(r) || '')
+    if (text == null) return
+    const sid = window.prompt('Session-Id (optional)', r.sessionId || '')
+    if (sid == null) return
+    const frame = window.prompt('Frame number (optional)', String(r.frame || ''))
+    if (frame == null) return
+
+    rows[i] = {
+      ...r,
+      src: src.trim(),
+      dst: dst.trim(),
+      sessionId: sid.trim(),
+      frame: Number(frame) || '',
+      customLabel: text.trim() || 'DIAMETER'
+    }
+    renderDiameterFlows(rows)
+  }
+
+  function deleteSelectedFlowRow() {
+    const i = STATE.flowsSelectedIndex
+    const rows = STATE.flowsRows || []
+    if (i < 0 || i >= rows.length) return
+    rows.splice(i, 1)
+    STATE.flowsSelectedIndex = Math.min(i, rows.length - 1)
+    renderDiameterFlows(rows)
   }
 
   function tryGetCaptureFromUrl() {
@@ -238,8 +368,12 @@
       const url = `/webshark/diameter-avps?capture=${encodeURIComponent(capture)}&frame=${encodeURIComponent(frame)}`
       const res = await fetch(url)
       const data = await res.json()
-      STATE.tableWrap.innerHTML = renderRows(data.rows || [])
-      STATE.status.textContent = `Loaded ${Array.isArray(data.rows) ? data.rows.length : 0} AVP(s)`
+      const rows = Array.isArray(data.rows) ? data.rows : []
+      STATE.currentRows = rows
+      STATE.currentCapture = capture
+      STATE.currentFrame = frame
+      STATE.tableWrap.innerHTML = renderRows(rows)
+      STATE.status.textContent = `Loaded ${rows.length} AVP(s)`
       STATE.lastLoadedKey = key
       try {
         localStorage.setItem(CAP_KEY, capture)
@@ -554,14 +688,54 @@
     ].join(';')
 
     const head = document.createElement('div')
-    head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;cursor:move;user-select:none;'
-    head.innerHTML = '<span>Diameter Flows (auto-generated)</span>'
-    const closeBtn = document.createElement('button')
-    closeBtn.textContent = '✕'
-    closeBtn.style.cssText = 'border:0;background:transparent;color:#fff;font-size:18px;cursor:pointer;'
-    closeBtn.addEventListener('mousedown', e => e.stopPropagation())
-    closeBtn.addEventListener('click', closeFlowsModal)
-    head.appendChild(closeBtn)
+    head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;cursor:move;user-select:none;gap:8px;'
+    const title = document.createElement('span')
+    title.textContent = 'Diameter Flows (auto-generated)'
+    head.appendChild(title)
+
+    const actions = document.createElement('div')
+    actions.style.cssText = 'display:flex;align-items:center;gap:6px;'
+
+    const mkBtn = (txt, onClick) => {
+      const b = document.createElement('button')
+      b.textContent = txt
+      b.style.cssText = 'border:1px solid rgba(255,255,255,.45);background:transparent;color:#fff;font-size:12px;padding:3px 7px;border-radius:4px;cursor:pointer;'
+      b.addEventListener('mousedown', e => e.stopPropagation())
+      b.addEventListener('click', e => {
+        e.stopPropagation()
+        onClick()
+      })
+      return b
+    }
+
+    const editBtn = mkBtn(STATE.flowsEditMode ? 'Editing: ON' : 'Editing: OFF', () => {
+      STATE.flowsEditMode = !STATE.flowsEditMode
+      STATE.flowsSelectedIndex = -1
+      renderDiameterFlows(STATE.flowsRows || rows)
+    })
+    const addBtn = mkBtn('+ Line', addFlowRow)
+    const editSelBtn = mkBtn('Edit', editSelectedFlowRow)
+    const delSelBtn = mkBtn('Delete', deleteSelectedFlowRow)
+    const expTxtBtn = mkBtn('Export TXT', exportFlowsTxt)
+
+    if (!STATE.flowsEditMode) {
+      addBtn.style.opacity = '.6'
+      editSelBtn.style.opacity = '.6'
+      delSelBtn.style.opacity = '.6'
+      addBtn.style.pointerEvents = 'none'
+      editSelBtn.style.pointerEvents = 'none'
+      delSelBtn.style.pointerEvents = 'none'
+    }
+
+    const closeBtn = mkBtn('✕', closeFlowsModal)
+
+    actions.appendChild(editBtn)
+    actions.appendChild(addBtn)
+    actions.appendChild(editSelBtn)
+    actions.appendChild(delSelBtn)
+    actions.appendChild(expTxtBtn)
+    actions.appendChild(closeBtn)
+    head.appendChild(actions)
 
     // Draggable modal panel (move by header)
     let drag = { active: false, sx: 0, sy: 0, tx: 0, ty: 0, ox: 0, oy: 0 }
@@ -678,12 +852,17 @@
 
       const x1 = xOf(sIdx)
       const x2 = xOf(dIdx)
-      const label = normalizeDiameterLabel(r.info, r.ccRequestType)
+      const label = rowDisplayLabel(r)
       const color = label.startsWith('CCA') || label.endsWith('Answer') ? '#2e7d32' : '#1565c0'
 
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
       g.style.cursor = 'pointer'
       g.addEventListener('click', async () => {
+        if (STATE.flowsEditMode) {
+          STATE.flowsSelectedIndex = i
+          renderDiameterFlows(STATE.flowsRows || rows)
+          return
+        }
         await ensureMounted()
         STATE.suppressFrameSyncUntil = Date.now() + 1400
         if (STATE.frameInput) STATE.frameInput.value = String(r.frame)
@@ -699,7 +878,7 @@
       line.setAttribute('y1', String(y))
       line.setAttribute('y2', String(y))
       line.setAttribute('stroke', color)
-      line.setAttribute('stroke-width', '1.8')
+      line.setAttribute('stroke-width', String(STATE.flowsEditMode && STATE.flowsSelectedIndex === i ? 3 : 1.8))
       g.appendChild(line)
 
       const arr = document.createElementNS('http://www.w3.org/2000/svg', 'polygon')
@@ -803,6 +982,7 @@
       })
 
       STATE.flowsRows = enriched
+      STATE.flowsSelectedIndex = -1
       renderDiameterFlows(enriched)
 
       // auto-show panel and load first message as requested
@@ -1009,6 +1189,8 @@
         <input id="dia-frame" style="width:90px;padding:3px 6px" />
         <button id="dia-load" style="padding:4px 10px;border:1px solid #3f51b5;background:#3f51b5;color:#fff;border-radius:4px;cursor:pointer;">Load</button>
         <button id="dia-flows" style="padding:4px 10px;border:1px solid #607d8b;background:#607d8b;color:#fff;border-radius:4px;cursor:pointer;">Diameter Flows</button>
+        <button id="dia-exp-csv" style="padding:4px 8px;border:1px solid #455a64;background:#455a64;color:#fff;border-radius:4px;cursor:pointer;">AVP→CSV</button>
+        <button id="dia-exp-txt" style="padding:4px 8px;border:1px solid #546e7a;background:#546e7a;color:#fff;border-radius:4px;cursor:pointer;">AVP→TXT</button>
       </div>
       <div id="dia-status" style="padding:6px 10px;color:#333;border-bottom:1px solid #f1f1f1;">Ready</div>
       <div id="dia-table" style="padding:8px 10px;overflow:auto;flex:1"></div>
@@ -1065,6 +1247,8 @@
 
     panel.querySelector('#dia-load').addEventListener('click', () => loadDiameter({ auto: false }))
     panel.querySelector('#dia-flows').addEventListener('click', () => openDiameterFlows())
+    panel.querySelector('#dia-exp-csv').addEventListener('click', () => exportAvpCsv())
+    panel.querySelector('#dia-exp-txt').addEventListener('click', () => exportAvpTxt())
 
     document.addEventListener(
       'click',
