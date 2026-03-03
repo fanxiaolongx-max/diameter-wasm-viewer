@@ -167,8 +167,10 @@
   async function loadDiameter(opts = {}) {
     if (STATE.loading) return
 
-    syncCaptureAndFrame()
-    await tryAutofillCaptureFromServer()
+    if (!opts.skipSync) {
+      syncCaptureAndFrame()
+      await tryAutofillCaptureFromServer()
+    }
 
     const capture = (STATE.captureInput.value || '').trim()
     const frame = (STATE.frameInput.value || '').trim()
@@ -535,7 +537,7 @@
       g.addEventListener('click', async () => {
         await ensureMounted()
         if (STATE.frameInput) STATE.frameInput.value = String(r.frame)
-        await loadDiameter({ auto: false })
+        await loadDiameter({ auto: false, skipSync: true })
         if (STATE.panel) {
           STATE.panel.style.zIndex = '100001'
         }
@@ -865,7 +867,7 @@
       loadFrame: async frame => {
         await ensureMounted()
         if (STATE.frameInput) STATE.frameInput.value = String(frame)
-        await loadDiameter({ auto: false })
+        await loadDiameter({ auto: false, skipSync: true })
       },
       ensureMounted
     }
