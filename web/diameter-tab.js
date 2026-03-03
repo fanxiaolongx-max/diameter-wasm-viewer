@@ -208,6 +208,33 @@
     }, 240)
   }
 
+  function applyDefaultDisplayFilter() {
+    const target = 'diameter.cmd.code==272'
+
+    // Heuristic search for display-filter input in WebShark UI.
+    const inputs = Array.from(document.querySelectorAll('input, textarea'))
+    const candidate = inputs.find(el => {
+      if (!el || el.id === 'dia-cap' || el.id === 'dia-frame') return false
+      const text = `${el.id || ''} ${el.name || ''} ${el.placeholder || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase()
+      return text.includes('filter') || text.includes('display')
+    })
+
+    if (!candidate) return false
+
+    const cur = String(candidate.value || '').trim()
+    if (cur) return true
+
+    candidate.value = target
+    candidate.dispatchEvent(new Event('input', { bubbles: true }))
+    candidate.dispatchEvent(new Event('change', { bubbles: true }))
+
+    // Try submit by Enter for UIs that apply on key press.
+    candidate.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    candidate.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
+
+    return true
+  }
+
   function savePanelPos() {
     if (!STATE.panel) return
     const left = parseInt(STATE.panel.style.left || '0', 10)
@@ -343,6 +370,14 @@
 
     syncCaptureAndFrame()
     tryAutofillCaptureFromServer().then(() => scheduleAutoLoad())
+
+    // Set default display filter when filter box appears.
+    let filterTry = 0
+    const filterTimer = setInterval(() => {
+      filterTry += 1
+      const ok = applyDefaultDisplayFilter()
+      if (ok || filterTry >= 20) clearInterval(filterTimer)
+    }, 300)
 
     panel.querySelector('#dia-load').addEventListener('click', () => loadDiameter({ auto: false }))
 

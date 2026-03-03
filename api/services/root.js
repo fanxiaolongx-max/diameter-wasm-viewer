@@ -31,28 +31,33 @@ module.exports = function (fastify, opts, next) {
 
     if (request.query && "method" in request.query) {
       if (request.query.method === 'files') {
-        const files = fs.readdirSync(CAPTURES_PATH);
-        const results = { files: [], pwd: '.' };
-        const loaded_files = sharkd_dict.get_loaded_sockets();
+        let files = fs.readdirSync(CAPTURES_PATH);
+        let results = {"files":[], "pwd": "."};
+        let loaded_files = sharkd_dict.get_loaded_sockets();
+        files.forEach( async function(pcap_file){
+          if (pcap_file.endsWith('.pcap') || pcap_file.endsWith('.pcapng')) {
+            /* fetch URLs to local folder */
+	    if(pcap_file.match(url_re)) {
+		  const res = await fetch(pcap_file);
+                  var filename = pcap_file.split('/').pop()
+		  const fileStream = fs.createWriteStream(CAPTURES_PATH+filename);
+		  await new Promise((resolve, reject) => {
+		      res.body.pipe(fileStream);
+		      res.body.on("error", reject);
+		      fileStream.on("finish", resolve);
+		    });
+		  pcap_file=filename;
+	    }
 
-        // Keep this branch fully synchronous/stable to avoid UI race/type issues.
-        for (let pcap_file of files) {
-          if (!(pcap_file.endsWith('.pcap') || pcap_file.endsWith('.pcapng'))) continue;
-
-          // URL capture names are unusual from readdir; keep defensive handling.
-          if (pcap_file.match(url_re)) {
-            continue;
+            let pcap_stats = fs.statSync(CAPTURES_PATH + pcap_file);
+            if (loaded_files.includes(pcap_file)) {
+              results.files.push({"name": pcap_file, "size": pcap_stats.size, "status": {"online": true}});
+            } else {
+              results.files.push({"name": pcap_file, "size": pcap_stats.size});
+            }
           }
-
-          const pcap_stats = fs.statSync(CAPTURES_PATH + pcap_file);
-          if (loaded_files.includes(pcap_file)) {
-            results.files.push({ name: pcap_file, size: pcap_stats.size, status: { online: true } });
-          } else {
-            results.files.push({ name: pcap_file, size: pcap_stats.size });
-          }
-        }
-
-        return reply.send(results);
+        });
+        reply.send(JSON.stringify(results));
       } else if (request.query.method === 'download') {
         if ("capture" in request.query) {
           if (request.query.capture.includes('..')) {
