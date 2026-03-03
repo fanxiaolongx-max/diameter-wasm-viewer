@@ -13,7 +13,8 @@
     autoLoadTimer: null,
     flowsModal: null,
     flowsRows: null,
-    menuInjectObserver: null
+    menuInjectObserver: null,
+    frameMetaCache: new Map()
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -326,7 +327,7 @@
     })
   }
 
-  function normalizeDiameterLabel(info) {
+  function normalizeDiameterLabel(info, ccType = '') {
     const text = String(info || '')
     const upper = text.toUpperCase()
 
@@ -337,17 +338,25 @@
       EVENT_REQUEST: 'E'
     }
 
+    const ccTypeText = String(ccType || '').trim()
+
     let suf = ''
     Object.keys(ccTypeMap).some(k => {
-      if (upper.includes(k)) {
+      if (upper.includes(k) || ccTypeText.toUpperCase().includes(k)) {
         suf = ccTypeMap[k]
         return true
       }
       return false
     })
 
-    if (upper.includes('CREDIT-CONTROL REQUEST')) return suf ? `CCR-${suf}` : 'CCR'
-    if (upper.includes('CREDIT-CONTROL ANSWER')) return suf ? `CCA-${suf}` : 'CCA'
+    if (upper.includes('CREDIT-CONTROL REQUEST')) {
+      if (ccTypeText) return `CCR-(${ccTypeText})`
+      return suf ? `CCR-${suf}` : 'CCR'
+    }
+    if (upper.includes('CREDIT-CONTROL ANSWER')) {
+      if (ccTypeText) return `CCA-(${ccTypeText})`
+      return suf ? `CCA-${suf}` : 'CCA'
+    }
     if (upper.includes('RE-AUTH-REQUEST')) return 'RAR'
     if (upper.includes('RE-AUTH-ANSWER')) return 'RAA'
     if (upper.includes('DEVICE-WATCHDOG REQUEST')) return 'DWR'
@@ -356,6 +365,68 @@
     if (upper.includes('CAPABILITIES-EXCHANGE ANSWER')) return 'CEA'
 
     return text.replace(/\s*\|.*$/, '').trim() || 'DIAMETER'
+  }
+
+  function extractFrameMetaFromTree(tree) {
+    let sessionId = ''
+    let ccRequestType = ''
+
+    function walk(nodes) {
+      for (const n of nodes || []) {
+        if (!n || typeof n !== 'object') continue
+        const l = String(n.l || '')
+        if (!sessionId && l.startsWith('Session-Id:')) {
+          sessionId = l.slice('Session-Id:'.length).trim()
+        }
+        if (!ccRequestType && l.startsWith('CC-Request-Type:')) {
+          ccRequestType = l.slice('CC-Request-Type:'.length).trim()
+        }
+        if (sessionId && ccRequestType) return
+        walk(n.n || [])
+        if (sessionId && ccRequestType) return
+      }
+    }
+
+    walk(tree || [])
+    return { sessionId, ccRequestType }
+  }
+
+  async function getFrameMeta(capture, frame) {
+    const key = `${capture}#${frame}`
+    if (STATE.frameMetaCache.has(key)) return STATE.frameMetaCache.get(key)
+
+    const p = (async () => {
+      try {
+        const url = `/webshark/json?method=frame&capture=${encodeURIComponent(capture)}&frame=${encodeURIComponent(frame)}&proto=true`
+        const res = await fetch(url)
+        const data = await res.json()
+        return extractFrameMetaFromTree(data && data.tree)
+      } catch {
+        return { sessionId: '', ccRequestType: '' }
+      }
+    })()
+
+    STATE.frameMetaCache.set(key, p)
+    const result = await p
+    STATE.frameMetaCache.set(key, result)
+    return result
+  }
+
+  async function enrichRowsWithFrameMeta(rows, capture, concurrency = 8) {
+    const out = rows.slice()
+    let idx = 0
+
+    async function worker() {
+      while (idx < out.length) {
+        const i = idx++
+        const r = out[i]
+        const meta = await getFrameMeta(capture, r.frame)
+        out[i] = { ...r, ...meta }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, out.length)) }, () => worker()))
+    return out
   }
 
   function closeFlowsModal() {
@@ -417,7 +488,7 @@
     })
 
     const W = Math.max(900, participants.length * 220)
-    const H = Math.max(380, rows.length * 34 + 120)
+    const H = Math.max(380, rows.length * 44 + 120)
     const xOf = idx => 120 + idx * ((W - 240) / Math.max(1, participants.length - 1))
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -449,14 +520,14 @@
     })
 
     rows.forEach((r, i) => {
-      const y = 56 + i * 30
+      const y = 56 + i * 38
       const sIdx = participants.indexOf(r.src)
       const dIdx = participants.indexOf(r.dst)
       if (sIdx < 0 || dIdx < 0) return
 
       const x1 = xOf(sIdx)
       const x2 = xOf(dIdx)
-      const label = normalizeDiameterLabel(r.info)
+      const label = normalizeDiameterLabel(r.info, r.ccRequestType)
       const color = label.startsWith('CCA') || label.endsWith('Answer') ? '#2e7d32' : '#1565c0'
 
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
@@ -491,13 +562,25 @@
 
       const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text')
       txt.setAttribute('x', String((x1 + x2) / 2))
-      txt.setAttribute('y', String(y - 6))
+      txt.setAttribute('y', String(y - 8))
       txt.setAttribute('text-anchor', 'middle')
       txt.setAttribute('font-size', '11')
       txt.setAttribute('font-family', 'Arial, sans-serif')
       txt.setAttribute('fill', '#1f1f1f')
       txt.textContent = `${label} (#${r.frame})`
       g.appendChild(txt)
+
+      if (r.sessionId) {
+        const t2 = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+        t2.setAttribute('x', String((x1 + x2) / 2))
+        t2.setAttribute('y', String(y + 8))
+        t2.setAttribute('text-anchor', 'middle')
+        t2.setAttribute('font-size', '10')
+        t2.setAttribute('font-family', 'Arial, sans-serif')
+        t2.setAttribute('fill', '#616161')
+        t2.textContent = r.sessionId.length > 90 ? `${r.sessionId.slice(0, 87)}...` : r.sessionId
+        g.appendChild(t2)
+      }
 
       svg.appendChild(g)
     })
@@ -552,22 +635,26 @@
           }
         })
         .filter(r => r.frame > 0 && /diameter/i.test(r.proto))
+        // Exclude Device-Watchdog messages from sequence chart.
+        .filter(r => !/device-watchdog\s+(request|answer)/i.test(r.info))
 
       if (!rows.length) {
         STATE.status.textContent = 'No Diameter frames found in this capture.'
         return
       }
 
-      STATE.flowsRows = rows
-      renderDiameterFlows(rows)
+      const enriched = await enrichRowsWithFrameMeta(rows, capture)
+
+      STATE.flowsRows = enriched
+      renderDiameterFlows(enriched)
 
       // auto-show panel and load first message as requested
-      if (rows[0]) {
-        if (STATE.frameInput) STATE.frameInput.value = String(rows[0].frame)
+      if (enriched[0]) {
+        if (STATE.frameInput) STATE.frameInput.value = String(enriched[0].frame)
         loadDiameter({ auto: false, keepTable: false })
       }
 
-      STATE.status.textContent = `Diameter Flows ready (${rows.length} messages)`
+      STATE.status.textContent = `Diameter Flows ready (${enriched.length} messages)`
     } catch (e) {
       STATE.status.textContent = `Diameter Flows failed: ${e.message || String(e)}`
     }
