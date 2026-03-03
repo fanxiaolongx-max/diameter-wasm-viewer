@@ -36,6 +36,8 @@ COPY --from=intermediate /usr/src/wireshark/build/run/colorfilters /usr/local/sh
 COPY --from=intermediate /usr/src/wireshark/build/run/libwireshark.so* /usr/local/lib/
 COPY --from=intermediate /usr/src/wireshark/build/run/libwiretap.so* /usr/local/lib/
 COPY --from=intermediate /usr/src/wireshark/build/run/libwsutil.so* /usr/local/lib/
+# Protocol dictionaries (Diameter AVP/commands/apps)
+COPY --from=intermediate /usr/src/wireshark/resources/protocols/diameter /usr/local/share/wireshark/diameter
 RUN ldconfig
 
 ENV CAPTURES_PATH=/captures/
