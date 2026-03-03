@@ -10,7 +10,10 @@
     drag: { active: false, dx: 0, dy: 0 },
     loading: false,
     lastLoadedKey: '',
-    autoLoadTimer: null
+    autoLoadTimer: null,
+    flowsModal: null,
+    flowsRows: null,
+    menuInjectObserver: null
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -93,15 +96,15 @@
   }
 
   function currentKey() {
-    const capture = (STATE.captureInput && STATE.captureInput.value || '').trim()
-    const frame = (STATE.frameInput && STATE.frameInput.value || '').trim()
+    const capture = ((STATE.captureInput && STATE.captureInput.value) || '').trim()
+    const frame = ((STATE.frameInput && STATE.frameInput.value) || '').trim()
     if (!capture || !frame) return ''
     return `${capture}#${frame}`
   }
 
   function syncCaptureAndFrame() {
-    const oldCap = (STATE.captureInput && STATE.captureInput.value || '').trim()
-    const oldFrame = (STATE.frameInput && STATE.frameInput.value || '').trim()
+    const oldCap = ((STATE.captureInput && STATE.captureInput.value) || '').trim()
+    const oldFrame = ((STATE.frameInput && STATE.frameInput.value) || '').trim()
 
     const frame = getCurrentFrame()
     if (frame && STATE.frameInput) STATE.frameInput.value = frame
@@ -114,8 +117,8 @@
       } catch {}
     }
 
-    const newCap = (STATE.captureInput && STATE.captureInput.value || '').trim()
-    const newFrame = (STATE.frameInput && STATE.frameInput.value || '').trim()
+    const newCap = ((STATE.captureInput && STATE.captureInput.value) || '').trim()
+    const newFrame = ((STATE.frameInput && STATE.frameInput.value) || '').trim()
     return oldCap !== newCap || oldFrame !== newFrame
   }
 
@@ -149,7 +152,8 @@
 
   function renderRows(rows) {
     if (!rows.length) return '<div style="opacity:.7">No Diameter AVP found in this frame.</div>'
-    const head = '<thead><tr><th style="text-align:left;padding:4px">AVP Name</th><th style="text-align:left;padding:4px">AVP Content</th><th style="text-align:left;padding:4px">AVP Flags</th></tr></thead>'
+    const head =
+      '<thead><tr><th style="text-align:left;padding:4px">AVP Name</th><th style="text-align:left;padding:4px">AVP Content</th><th style="text-align:left;padding:4px">AVP Flags</th></tr></thead>'
     const body = rows
       .map(
         r =>
@@ -211,7 +215,6 @@
   function applyDefaultDisplayFilter() {
     const target = 'diameter.cmd.code==272'
 
-    // Heuristic search for display-filter input in WebShark UI.
     const inputs = Array.from(document.querySelectorAll('input, textarea'))
     const candidate = inputs.find(el => {
       if (!el || el.id === 'dia-cap' || el.id === 'dia-frame') return false
@@ -227,8 +230,6 @@
     candidate.value = target
     candidate.dispatchEvent(new Event('input', { bubbles: true }))
     candidate.dispatchEvent(new Event('change', { bubbles: true }))
-
-    // Try submit by Enter for UIs that apply on key press.
     candidate.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     candidate.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
 
@@ -314,6 +315,299 @@
       savePanelPos()
       savePanelSize()
     })
+  }
+
+  function normalizeDiameterLabel(info) {
+    const text = String(info || '')
+    const upper = text.toUpperCase()
+
+    const ccTypeMap = {
+      INITIAL_REQUEST: 'I',
+      UPDATE_REQUEST: 'U',
+      TERMINATION_REQUEST: 'T',
+      EVENT_REQUEST: 'E'
+    }
+
+    let suf = ''
+    Object.keys(ccTypeMap).some(k => {
+      if (upper.includes(k)) {
+        suf = ccTypeMap[k]
+        return true
+      }
+      return false
+    })
+
+    if (upper.includes('CREDIT-CONTROL REQUEST')) return suf ? `CCR-${suf}` : 'CCR'
+    if (upper.includes('CREDIT-CONTROL ANSWER')) return suf ? `CCA-${suf}` : 'CCA'
+    if (upper.includes('RE-AUTH-REQUEST')) return 'RAR'
+    if (upper.includes('RE-AUTH-ANSWER')) return 'RAA'
+    if (upper.includes('DEVICE-WATCHDOG REQUEST')) return 'DWR'
+    if (upper.includes('DEVICE-WATCHDOG ANSWER')) return 'DWA'
+    if (upper.includes('CAPABILITIES-EXCHANGE REQUEST')) return 'CER'
+    if (upper.includes('CAPABILITIES-EXCHANGE ANSWER')) return 'CEA'
+
+    return text.replace(/\s*\|.*$/, '').trim() || 'DIAMETER'
+  }
+
+  function closeFlowsModal() {
+    if (STATE.flowsModal && STATE.flowsModal.parentNode) {
+      STATE.flowsModal.parentNode.removeChild(STATE.flowsModal)
+    }
+    STATE.flowsModal = null
+  }
+
+  function renderDiameterFlows(rows) {
+    closeFlowsModal()
+
+    const modal = document.createElement('div')
+    modal.style.cssText = [
+      'position:fixed',
+      'inset:0',
+      'background:rgba(0,0,0,.38)',
+      'z-index:100000',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center'
+    ].join(';')
+
+    const panel = document.createElement('div')
+    panel.style.cssText = [
+      'width:min(1200px,96vw)',
+      'height:min(86vh,900px)',
+      'background:#fff',
+      'border-radius:10px',
+      'display:flex',
+      'flex-direction:column',
+      'box-shadow:0 8px 30px rgba(0,0,0,.25)',
+      'overflow:hidden'
+    ].join(';')
+
+    const head = document.createElement('div')
+    head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;'
+    head.innerHTML = '<span>Diameter Flows (auto-generated)</span>'
+    const closeBtn = document.createElement('button')
+    closeBtn.textContent = '✕'
+    closeBtn.style.cssText = 'border:0;background:transparent;color:#fff;font-size:18px;cursor:pointer;'
+    closeBtn.addEventListener('click', closeFlowsModal)
+    head.appendChild(closeBtn)
+
+    const body = document.createElement('div')
+    body.style.cssText = 'flex:1;overflow:auto;padding:8px;background:#fafafa;'
+
+    const participants = []
+    const pSet = new Set()
+    rows.forEach(r => {
+      if (!pSet.has(r.src)) {
+        pSet.add(r.src)
+        participants.push(r.src)
+      }
+      if (!pSet.has(r.dst)) {
+        pSet.add(r.dst)
+        participants.push(r.dst)
+      }
+    })
+
+    const W = Math.max(900, participants.length * 220)
+    const H = Math.max(380, rows.length * 34 + 120)
+    const xOf = idx => 120 + idx * ((W - 240) / Math.max(1, participants.length - 1))
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+    svg.setAttribute('width', '100%')
+    svg.setAttribute('height', String(H))
+    svg.style.background = '#fff'
+
+    participants.forEach((p, idx) => {
+      const x = xOf(idx)
+
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      t.setAttribute('x', String(x))
+      t.setAttribute('y', '26')
+      t.setAttribute('text-anchor', 'middle')
+      t.setAttribute('font-size', '12')
+      t.setAttribute('font-family', 'Arial, sans-serif')
+      t.textContent = p
+      svg.appendChild(t)
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+      line.setAttribute('x1', String(x))
+      line.setAttribute('x2', String(x))
+      line.setAttribute('y1', '34')
+      line.setAttribute('y2', String(H - 24))
+      line.setAttribute('stroke', '#c7c7c7')
+      line.setAttribute('stroke-dasharray', '4 4')
+      svg.appendChild(line)
+    })
+
+    rows.forEach((r, i) => {
+      const y = 56 + i * 30
+      const sIdx = participants.indexOf(r.src)
+      const dIdx = participants.indexOf(r.dst)
+      if (sIdx < 0 || dIdx < 0) return
+
+      const x1 = xOf(sIdx)
+      const x2 = xOf(dIdx)
+      const label = normalizeDiameterLabel(r.info)
+      const color = label.startsWith('CCA') || label.endsWith('Answer') ? '#2e7d32' : '#1565c0'
+
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      g.style.cursor = 'pointer'
+      g.addEventListener('click', async () => {
+        await ensureMounted()
+        if (STATE.frameInput) STATE.frameInput.value = String(r.frame)
+        await loadDiameter({ auto: false })
+        if (STATE.panel) {
+          STATE.panel.style.zIndex = '100001'
+        }
+      })
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+      line.setAttribute('x1', String(x1))
+      line.setAttribute('x2', String(x2))
+      line.setAttribute('y1', String(y))
+      line.setAttribute('y2', String(y))
+      line.setAttribute('stroke', color)
+      line.setAttribute('stroke-width', '1.8')
+      g.appendChild(line)
+
+      const arr = document.createElementNS('http://www.w3.org/2000/svg', 'polygon')
+      const dir = x2 >= x1 ? 1 : -1
+      const tipX = x2
+      const pts = dir > 0
+        ? `${tipX},${y} ${tipX - 8},${y - 4} ${tipX - 8},${y + 4}`
+        : `${tipX},${y} ${tipX + 8},${y - 4} ${tipX + 8},${y + 4}`
+      arr.setAttribute('points', pts)
+      arr.setAttribute('fill', color)
+      g.appendChild(arr)
+
+      const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      txt.setAttribute('x', String((x1 + x2) / 2))
+      txt.setAttribute('y', String(y - 6))
+      txt.setAttribute('text-anchor', 'middle')
+      txt.setAttribute('font-size', '11')
+      txt.setAttribute('font-family', 'Arial, sans-serif')
+      txt.setAttribute('fill', '#1f1f1f')
+      txt.textContent = `${label} (#${r.frame})`
+      g.appendChild(txt)
+
+      svg.appendChild(g)
+    })
+
+    body.appendChild(svg)
+
+    const foot = document.createElement('div')
+    foot.style.cssText = 'padding:8px 12px;border-top:1px solid #eee;font-size:12px;color:#555;background:#fff;'
+    foot.textContent = 'Tip: click any arrow/message to auto-load that frame into DIAMETER AVP panel.'
+
+    panel.appendChild(head)
+    panel.appendChild(body)
+    panel.appendChild(foot)
+    modal.appendChild(panel)
+
+    modal.addEventListener('click', e => {
+      if (e.target === modal) closeFlowsModal()
+    })
+
+    document.body.appendChild(modal)
+    STATE.flowsModal = modal
+  }
+
+  async function openDiameterFlows() {
+    await ensureMounted()
+    syncCaptureAndFrame()
+    await tryAutofillCaptureFromServer()
+
+    const capture = (STATE.captureInput.value || '').trim()
+    if (!capture) {
+      STATE.status.textContent = '请先选择 capture 后再打开 Diameter Flows'
+      return
+    }
+
+    STATE.status.textContent = 'Building Diameter Flows...'
+
+    try {
+      const url = `/webshark/json?method=frames&capture=${encodeURIComponent(capture)}`
+      const res = await fetch(url)
+      const data = await res.json()
+      const all = Array.isArray(data) ? data : []
+
+      const rows = all
+        .map(item => {
+          const c = Array.isArray(item && item.c) ? item.c : []
+          return {
+            frame: Number(item.num || c[0] || 0),
+            src: String(c[2] || ''),
+            dst: String(c[3] || ''),
+            proto: String(c[4] || ''),
+            info: String(c[6] || '')
+          }
+        })
+        .filter(r => r.frame > 0 && /diameter/i.test(r.proto))
+
+      if (!rows.length) {
+        STATE.status.textContent = 'No Diameter frames found in this capture.'
+        return
+      }
+
+      STATE.flowsRows = rows
+      renderDiameterFlows(rows)
+
+      // auto-show panel and load first message as requested
+      if (rows[0]) {
+        if (STATE.frameInput) STATE.frameInput.value = String(rows[0].frame)
+        loadDiameter({ auto: false, keepTable: false })
+      }
+
+      STATE.status.textContent = `Diameter Flows ready (${rows.length} messages)`
+    } catch (e) {
+      STATE.status.textContent = `Diameter Flows failed: ${e.message || String(e)}`
+    }
+  }
+
+  function tryInjectDiameterFlowsMenu() {
+    // Find menu-like containers where existing "Flows" actions exist.
+    const containers = Array.from(document.querySelectorAll('[role="menu"], .mat-mdc-menu-content, .mat-menu-content'))
+    containers.forEach(menu => {
+      const txt = (menu.innerText || '').toLowerCase()
+      if (!txt.includes('flows')) return
+      if (menu.querySelector('[data-dia-flows-item="1"]')) return
+
+      const item = document.createElement('button')
+      item.type = 'button'
+      item.setAttribute('data-dia-flows-item', '1')
+      item.textContent = 'Diameter Flows'
+      item.style.cssText = [
+        'width:100%',
+        'text-align:left',
+        'padding:8px 12px',
+        'border:0',
+        'background:transparent',
+        'cursor:pointer',
+        'font:inherit'
+      ].join(';')
+      item.addEventListener('click', () => {
+        openDiameterFlows()
+      })
+
+      const host = menu
+      host.appendChild(item)
+    })
+  }
+
+  function installMenuInjector() {
+    tryInjectDiameterFlowsMenu()
+    if (STATE.menuInjectObserver) return
+
+    const mo = new MutationObserver(() => {
+      tryInjectDiameterFlowsMenu()
+    })
+    mo.observe(document.body, { subtree: true, childList: true })
+    STATE.menuInjectObserver = mo
+  }
+
+  async function ensureMounted() {
+    if (STATE.mounted) return
+    mount()
   }
 
   function mount() {
@@ -408,7 +702,6 @@
       attributeFilter: ['class', 'aria-selected']
     })
 
-    // Persist manual resize
     if (window.ResizeObserver) {
       const ro = new ResizeObserver(() => {
         savePanelSize()
@@ -439,6 +732,19 @@
         if (saved) applyPanelPos(saved)
       } catch {}
     })
+
+    installMenuInjector()
+
+    // Expose APIs for future integration/testing.
+    window.DiameterPanel = {
+      openFlows: openDiameterFlows,
+      loadFrame: async frame => {
+        await ensureMounted()
+        if (STATE.frameInput) STATE.frameInput.value = String(frame)
+        await loadDiameter({ auto: false })
+      },
+      ensureMounted
+    }
 
     STATE.mounted = true
   }
