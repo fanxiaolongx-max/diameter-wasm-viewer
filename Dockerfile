@@ -45,6 +45,8 @@ ENV SHARKD_SOCKET=/captures/sharkd.sock
 
 COPY --chown=node . /usr/src/node-webshark
 COPY --from=intermediate /usr/src/web /usr/src/node-webshark/web
+# Local web overrides (custom tabs/features)
+COPY --chown=node web /usr/src/node-webshark/web
 
 VOLUME /captures
 
