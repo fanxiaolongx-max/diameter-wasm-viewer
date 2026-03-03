@@ -69,24 +69,27 @@ get_sharkd_cli = async function(capture) {
     catch(err) {
       console.log("Error trying to connect to " + SHARKD_SOCKET)
       console.log(err);
-      if (sharkd_proc !== null && sharkd_proc.pid) {
-        console.log("sharkd_proc.pid: " + sharkd_proc.pid)
-        sharkd_proc.kill('SIGHUP');
-        await sleep(250);
-        sharkd_proc = null;
+
+      // Avoid killing the API process on transient sharkd startup races.
+      // If sharkd is already starting/running, just wait and retry.
+      if (sharkd_proc !== null && sharkd_proc.pid && sharkd_proc.exitCode === null) {
+        console.log("sharkd_proc.pid: " + sharkd_proc.pid + " (already running/starting)")
+        await sleep(300);
+        return get_sharkd_cli(capture);
       }
+
       try {
         console.log(`Trying to spawn unix:${SHARKD_SOCKET}`)
         sharkd_proc = spawn('sharkd', ['unix:' + SHARKD_SOCKET]);
-        await sleep(250);
-        if (sharkd_proc.exitCode === 1) {
-          console.log(`Error spawning sharkd under ${SHARKD_SOCKET} / exit 1`);
-          process.exit(1);
+        await sleep(350);
+        if (sharkd_proc.exitCode !== null && sharkd_proc.exitCode !== 0) {
+          console.log(`Error spawning sharkd under ${SHARKD_SOCKET} / exit ${sharkd_proc.exitCode}`);
+          return null;
         }
       } catch (err_2) {
         console.log(`Error spawning sharkd under ${SHARKD_SOCKET} / err_2`);
         console.log(err_2);
-        process.exit(1);
+        return null;
       }
       return get_sharkd_cli(capture);
     }
