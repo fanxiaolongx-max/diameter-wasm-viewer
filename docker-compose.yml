@@ -12,6 +12,7 @@ services:
       - "8085:8085"
     volumes:
       - ./captures:/captures
+      - ./web:/usr/src/node-webshark/web
     environment:
       - SHARKD_SOCKET=/home/node/sharkd.sock
       - CAPTURES_PATH=/captures/
