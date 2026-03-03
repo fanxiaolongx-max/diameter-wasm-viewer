@@ -1385,6 +1385,24 @@
     document.body.appendChild(openOverlay)
 
     let clickOverlayTimer = null
+    function showOpenOverlay(text = '正在打开文件并加载消息列表...') {
+      const t2 = openOverlay.querySelector('#dia-open-text')
+      if (t2) t2.textContent = text
+      openOverlay.style.display = 'flex'
+      if (clickOverlayTimer) clearTimeout(clickOverlayTimer)
+      clickOverlayTimer = setTimeout(() => {
+        if (openOverlay.style.display === 'flex') openOverlay.style.display = 'none'
+        clickOverlayTimer = null
+      }, 12000)
+    }
+    function hideOpenOverlay() {
+      if (clickOverlayTimer) {
+        clearTimeout(clickOverlayTimer)
+        clickOverlayTimer = null
+      }
+      openOverlay.style.display = 'none'
+    }
+
     document.addEventListener(
       'click',
       e => {
@@ -1394,23 +1412,34 @@
         if (!node) return
 
         const txt = String(node.textContent || '').trim()
-        const href = String(node.getAttribute && node.getAttribute('href') || '')
-        const router = String(node.getAttribute && node.getAttribute('routerLink') || '')
-        const maybeCapture = /\.pcapng?\b/i.test(txt) || /\.pcapng?\b/i.test(href) || /capture=/i.test(href + router)
-        if (!maybeCapture) return
-
-        const t2 = openOverlay.querySelector('#dia-open-text')
-        if (t2) t2.textContent = '正在打开文件并加载消息列表...'
-        openOverlay.style.display = 'flex'
-
-        if (clickOverlayTimer) clearTimeout(clickOverlayTimer)
-        clickOverlayTimer = setTimeout(() => {
-          if (openOverlay.style.display === 'flex') openOverlay.style.display = 'none'
-          clickOverlayTimer = null
-        }, 12000)
+        const href = String((node.getAttribute && node.getAttribute('href')) || '')
+        const router = String((node.getAttribute && node.getAttribute('routerLink')) || '')
+        const maybeCapture = /\.pcapng?\b/i.test(txt) || /\.pcapng?\b/i.test(href) || /\.pcapng?\b/i.test(router) || /capture=/i.test(href + router)
+        if (maybeCapture) showOpenOverlay()
       },
       true
     )
+
+    if (!window.__diaHistoryHooked) {
+      window.__diaHistoryHooked = true
+      const origPush = history.pushState.bind(history)
+      const origReplace = history.replaceState.bind(history)
+      const checkUrl = u => {
+        const s = String(u || '')
+        if (/\.pcapng?\b/i.test(s) || /capture=/i.test(s)) showOpenOverlay()
+      }
+      history.pushState = function (state, title, url) {
+        checkUrl(url)
+        return origPush(state, title, url)
+      }
+      history.replaceState = function (state, title, url) {
+        checkUrl(url)
+        return origReplace(state, title, url)
+      }
+      window.addEventListener('popstate', () => {
+        if (/\.pcapng?\b|capture=/i.test(location.href)) showOpenOverlay()
+      })
+    }
 
     let pending = 0
     let pendingOpen = 0
@@ -1440,9 +1469,7 @@
       }
       if (isOpenFrames) {
         pendingOpen += 1
-        const t2 = openOverlay.querySelector('#dia-open-text')
-        if (t2) t2.textContent = '正在打开文件并加载消息列表...'
-        openOverlay.style.display = 'flex'
+        showOpenOverlay()
       }
       let resp
       try {
@@ -1459,7 +1486,7 @@
         }
         if (isOpenFrames) {
           pendingOpen = Math.max(0, pendingOpen - 1)
-          if (pendingOpen === 0) openOverlay.style.display = 'none'
+          if (pendingOpen === 0) hideOpenOverlay()
         }
       }
     }
