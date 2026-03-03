@@ -16,7 +16,8 @@
     menuInjectObserver: null,
     frameMetaCache: new Map(),
     suppressFrameSyncUntil: 0,
-    freezeFrameSyncWhileFlowsOpen: false
+    freezeFrameSyncWhileFlowsOpen: false,
+    reopenBtn: null
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -208,6 +209,7 @@
 
   async function loadDiameter(opts = {}) {
     if (STATE.loading) return
+    showDiameterPanel()
 
     if (!opts.skipSync) {
       syncCaptureAndFrame()
@@ -551,13 +553,38 @@
     ].join(';')
 
     const head = document.createElement('div')
-    head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;'
+    head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;cursor:move;user-select:none;'
     head.innerHTML = '<span>Diameter Flows (auto-generated)</span>'
     const closeBtn = document.createElement('button')
     closeBtn.textContent = '✕'
     closeBtn.style.cssText = 'border:0;background:transparent;color:#fff;font-size:18px;cursor:pointer;'
+    closeBtn.addEventListener('mousedown', e => e.stopPropagation())
     closeBtn.addEventListener('click', closeFlowsModal)
     head.appendChild(closeBtn)
+
+    // Draggable modal panel (move by header)
+    let drag = { active: false, sx: 0, sy: 0, tx: 0, ty: 0, ox: 0, oy: 0 }
+    const applyModalOffset = () => {
+      panel.style.transform = `translate(${drag.ox}px, ${drag.oy}px)`
+    }
+    head.addEventListener('mousedown', e => {
+      if (e.button !== 0) return
+      drag.active = true
+      drag.sx = e.clientX
+      drag.sy = e.clientY
+      drag.tx = drag.ox
+      drag.ty = drag.oy
+      e.preventDefault()
+    })
+    document.addEventListener('mousemove', e => {
+      if (!drag.active) return
+      drag.ox = drag.tx + (e.clientX - drag.sx)
+      drag.oy = drag.ty + (e.clientY - drag.sy)
+      applyModalOffset()
+    })
+    document.addEventListener('mouseup', () => {
+      drag.active = false
+    })
 
     const body = document.createElement('div')
     body.style.cssText = 'flex:1;overflow:auto;padding:8px;background:#fafafa;'
@@ -855,8 +882,23 @@
     STATE.menuInjectObserver = mo
   }
 
+  function hideDiameterPanel() {
+    if (!STATE.panel) return
+    STATE.panel.style.display = 'none'
+    if (STATE.reopenBtn) STATE.reopenBtn.style.display = 'flex'
+  }
+
+  function showDiameterPanel() {
+    if (!STATE.panel) return
+    STATE.panel.style.display = 'flex'
+    if (STATE.reopenBtn) STATE.reopenBtn.style.display = 'none'
+  }
+
   async function ensureMounted() {
-    if (STATE.mounted) return
+    if (STATE.mounted) {
+      showDiameterPanel()
+      return
+    }
     mount()
   }
 
@@ -891,6 +933,7 @@
       <div id="dia-drag-handle" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#3f51b5;color:#fff;font-weight:600;user-select:none;">
         <span>DIAMETER</span>
         <span style="opacity:.85;font-weight:400;">(independent panel, draggable + resizable)</span>
+        <button id="dia-close" title="Close" style="margin-left:auto;border:0;background:transparent;color:#fff;font-size:16px;cursor:pointer;">✕</button>
       </div>
       <div style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #eee;">
         <label>Capture</label>
@@ -912,6 +955,35 @@
     STATE.status = panel.querySelector('#dia-status')
     STATE.captureInput = panel.querySelector('#dia-cap')
     STATE.frameInput = panel.querySelector('#dia-frame')
+
+    const reopenBtn = document.createElement('button')
+    reopenBtn.id = 'dia-reopen'
+    reopenBtn.textContent = 'DIAMETER'
+    reopenBtn.title = 'Reopen DIAMETER panel'
+    reopenBtn.style.cssText = [
+      'position:fixed',
+      'right:12px',
+      'bottom:12px',
+      'z-index:100000',
+      'display:none',
+      'align-items:center',
+      'justify-content:center',
+      'padding:8px 12px',
+      'border:1px solid #3f51b5',
+      'background:#3f51b5',
+      'color:#fff',
+      'border-radius:16px',
+      'cursor:pointer',
+      'font-size:12px'
+    ].join(';')
+    reopenBtn.addEventListener('click', () => showDiameterPanel())
+    document.body.appendChild(reopenBtn)
+    STATE.reopenBtn = reopenBtn
+
+    panel.querySelector('#dia-close').addEventListener('click', e => {
+      e.stopPropagation()
+      hideDiameterPanel()
+    })
 
     syncCaptureAndFrame()
     tryAutofillCaptureFromServer().then(() => scheduleAutoLoad())
