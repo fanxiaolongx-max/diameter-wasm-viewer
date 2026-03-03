@@ -1627,10 +1627,19 @@
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => installNetworkProgressHint(), { once: true })
+    document.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        installNetworkProgressHint()
+        installMenuInjector()
+      },
+      { once: true }
+    )
   } else {
     installNetworkProgressHint()
+    installMenuInjector()
   }
 
-  setTimeout(mount, 800)
+  // Do NOT auto-open DIAMETER panel on WebShark home.
+  // Panel is mounted lazily when user explicitly opens DIAMETER-related actions.
 })()
