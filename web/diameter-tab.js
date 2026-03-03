@@ -24,13 +24,7 @@
     currentFrame: '',
     flowsEditMode: false,
     flowsSelectedIndex: -1,
-    flowsCache: new Map(),
-    flowsAllRows: [],
-    sessionFilterMode: 'multi',
-    sessionFilterSet: new Set(),
-    sessionFilterText: '',
-    captureEpochCache: new Map(),
-    timeEnhanceTimer: null
+    flowsCache: new Map()
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -98,134 +92,6 @@
   function rowDisplayLabel(r) {
     if (r && r.customLabel) return String(r.customLabel)
     return normalizeDiameterLabel(r && r.info, r && r.ccRequestType)
-  }
-
-  function getUniqueSessionIds(rows) {
-    const set = new Set()
-    ;(rows || []).forEach(r => {
-      const s = String((r && r.sessionId) || '').trim()
-      if (s) set.add(s)
-    })
-    return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }
-
-  function applySessionFilterToRows(rows) {
-    const all = Array.isArray(rows) ? rows : []
-    if (!all.length) return []
-
-    const keyword = String(STATE.sessionFilterText || '').trim().toLowerCase()
-    const picked = STATE.sessionFilterSet || new Set()
-
-    return all.filter(r => {
-      const s = String((r && r.sessionId) || '').trim()
-      if (keyword && !s.toLowerCase().includes(keyword)) return false
-      if (picked.size > 0 && !picked.has(s)) return false
-      return true
-    })
-  }
-
-  function refreshFlowsFromFilter() {
-    const base = Array.isArray(STATE.flowsAllRows) ? STATE.flowsAllRows : []
-    STATE.flowsRows = applySessionFilterToRows(base)
-    STATE.flowsSelectedIndex = -1
-    renderDiameterFlows(STATE.flowsRows)
-  }
-
-  function openSessionFilterDialog() {
-    const all = Array.isArray(STATE.flowsAllRows) ? STATE.flowsAllRows : []
-    if (!all.length) return
-
-    const sessions = getUniqueSessionIds(all)
-    const modal = document.createElement('div')
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100002;display:flex;align-items:center;justify-content:center;'
-
-    const card = document.createElement('div')
-    card.style.cssText = 'width:min(780px,95vw);max-height:80vh;background:#fff;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;'
-
-    const modeMulti = STATE.sessionFilterMode !== 'single'
-
-    card.innerHTML = `
-      <div style="padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;">Session-Id Filter</div>
-      <div style="padding:10px 12px;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eee;">
-        <label style="display:flex;align-items:center;gap:5px;font-size:12px;"><input type="radio" name="dia-s-mode" value="single" ${modeMulti ? '' : 'checked'}> Single</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:12px;"><input type="radio" name="dia-s-mode" value="multi" ${modeMulti ? 'checked' : ''}> Multi</label>
-        <input id="dia-s-search" placeholder="Filter session-id..." style="margin-left:auto;min-width:220px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;" value="${escapeHtml(STATE.sessionFilterText || '')}">
-      </div>
-      <div id="dia-s-list" style="padding:8px 12px;overflow:auto;flex:1;"></div>
-      <div style="padding:10px 12px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid #eee;">
-        <button id="dia-s-clear" style="padding:5px 10px;">Clear</button>
-        <button id="dia-s-cancel" style="padding:5px 10px;">Cancel</button>
-        <button id="dia-s-apply" style="padding:5px 10px;background:#3f51b5;color:#fff;border:1px solid #3f51b5;border-radius:4px;">Apply</button>
-      </div>
-    `
-
-    modal.appendChild(card)
-    document.body.appendChild(modal)
-
-    const listEl = card.querySelector('#dia-s-list')
-    const searchEl = card.querySelector('#dia-s-search')
-    const selected = new Set(Array.from(STATE.sessionFilterSet || []))
-
-    function drawList() {
-      const mode = card.querySelector('input[name="dia-s-mode"]:checked')?.value || 'multi'
-      const kw = String(searchEl.value || '').trim().toLowerCase()
-      const filtered = sessions.filter(s => !kw || s.toLowerCase().includes(kw))
-
-      listEl.innerHTML = filtered
-        .map((s, i) => {
-          const checked = selected.has(s) ? 'checked' : ''
-          const t = mode === 'single' ? 'radio' : 'checkbox'
-          return `<label style="display:flex;align-items:flex-start;gap:8px;padding:4px 0;font-size:12px;"><input type="${t}" name="dia-s-item" data-sid="${escapeHtml(s)}" ${checked}><span>${escapeHtml(s)}</span></label>`
-        })
-        .join('') || '<div style="opacity:.7;font-size:12px;">No session-id matched.</div>'
-
-      listEl.querySelectorAll('input[name="dia-s-item"]').forEach(inp => {
-        inp.addEventListener('change', () => {
-          const sid = inp.getAttribute('data-sid') || ''
-          const mode2 = card.querySelector('input[name="dia-s-mode"]:checked')?.value || 'multi'
-          if (mode2 === 'single') {
-            selected.clear()
-            if (inp.checked) selected.add(sid)
-            drawList()
-            return
-          }
-          if (inp.checked) selected.add(sid)
-          else selected.delete(sid)
-        })
-      })
-    }
-
-    searchEl.addEventListener('input', drawList)
-    card.querySelectorAll('input[name="dia-s-mode"]').forEach(r => {
-      r.addEventListener('change', () => {
-        if (r.value === 'single' && selected.size > 1) {
-          const first = Array.from(selected)[0]
-          selected.clear()
-          if (first) selected.add(first)
-        }
-        drawList()
-      })
-    })
-
-    card.querySelector('#dia-s-cancel').addEventListener('click', () => modal.remove())
-    card.querySelector('#dia-s-clear').addEventListener('click', () => {
-      selected.clear()
-      searchEl.value = ''
-      drawList()
-    })
-    card.querySelector('#dia-s-apply').addEventListener('click', () => {
-      STATE.sessionFilterMode = card.querySelector('input[name="dia-s-mode"]:checked')?.value || 'multi'
-      STATE.sessionFilterText = String(searchEl.value || '').trim()
-      STATE.sessionFilterSet = new Set(Array.from(selected))
-      modal.remove()
-      refreshFlowsFromFilter()
-    })
-
-    modal.addEventListener('click', e => {
-      if (e.target === modal) modal.remove()
-    })
-
-    drawList()
   }
 
   function exportAvpCsv() {
@@ -334,100 +200,36 @@
     renderDiameterFlows(rows)
   }
 
-  function formatAbsoluteLocal(epochSec) {
-    const n = Number(epochSec)
+  function formatSecondsToClock(v) {
+    const n = Number(v)
     if (!Number.isFinite(n)) return ''
-    const d = new Date(n * 1000)
-    const Y = d.getFullYear()
-    const M = String(d.getMonth() + 1).padStart(2, '0')
-    const D = String(d.getDate()).padStart(2, '0')
-    const h = String(d.getHours()).padStart(2, '0')
-    const m = String(d.getMinutes()).padStart(2, '0')
-    const s = String(d.getSeconds()).padStart(2, '0')
-    const ms = String(d.getMilliseconds()).padStart(3, '0')
-    return `${Y}-${M}-${D} ${h}:${m}:${s}.${ms}`
-  }
-
-  async function getCaptureBaseEpoch(capture) {
-    const key = String(capture || '').trim()
-    if (!key) return null
-    if (STATE.captureEpochCache.has(key)) {
-      return await STATE.captureEpochCache.get(key)
-    }
-
-    const p = (async () => {
-      try {
-        const url = `/webshark/json?method=frame&capture=${encodeURIComponent(key)}&frame=1&proto=true`
-        const res = await fetch(url)
-        const data = await res.json()
-
-        let epoch = null
-        function walk(nodes) {
-          for (const n of nodes || []) {
-            if (!n || typeof n !== 'object') continue
-            const l = String(n.l || '')
-            const m = l.match(/Epoch Arrival Time:\s*([0-9]+(?:\.[0-9]+)?)/i)
-            if (m) {
-              epoch = Number(m[1])
-              return
-            }
-            walk(n.n || [])
-            if (epoch != null) return
-          }
-        }
-        walk(data && data.tree)
-        return Number.isFinite(epoch) ? epoch : null
-      } catch {
-        return null
-      }
-    })()
-
-    STATE.captureEpochCache.set(key, p)
-    const val = await p
-    STATE.captureEpochCache.set(key, Promise.resolve(val))
-    return val
+    const h = Math.floor(n / 3600)
+    const m = Math.floor((n % 3600) / 60)
+    const s = Math.floor(n % 60)
+    const ms = Math.round((n - Math.floor(n)) * 1000)
+    const hh = String(h).padStart(2, '0')
+    const mm = String(m).padStart(2, '0')
+    const ss = String(s).padStart(2, '0')
+    const mss = String(ms).padStart(3, '0')
+    return `${hh}:${mm}:${ss}.${mss}`
   }
 
   function enhanceWebsharkTimeColumn() {
-    const capture = (STATE.captureInput && STATE.captureInput.value ? STATE.captureInput.value : getCaptureName() || '').trim()
-    if (!capture) return
+    const rows = document.querySelectorAll('table tr, [role="row"]')
+    rows.forEach(tr => {
+      const cells = tr.querySelectorAll('td, [role="gridcell"]')
+      if (!cells || cells.length < 2) return
+      const timeCell = cells[1]
+      if (!timeCell || timeCell.getAttribute('data-dia-timefmt') === '1') return
+      const raw = (timeCell.textContent || '').trim()
+      if (!/^\d+(\.\d+)?$/.test(raw)) return
 
-    getCaptureBaseEpoch(capture).then(baseEpoch => {
-      if (!Number.isFinite(baseEpoch)) return
-      const rows = document.querySelectorAll('table tr, [role="row"]')
-      rows.forEach(tr => {
-        const cells = tr.querySelectorAll('td, [role="gridcell"]')
-        if (!cells || cells.length < 2) return
-        const timeCell = cells[1]
-        if (!timeCell) return
-
-        const relRaw = String(timeCell.getAttribute('data-dia-rel') || (timeCell.textContent || '').trim())
-        if (!/^\d+(\.\d+)?$/.test(relRaw)) return
-
-        const rel = Number(relRaw)
-        if (!Number.isFinite(rel)) return
-
-        const abs = baseEpoch + rel
-        const fmt = formatAbsoluteLocal(abs)
-        if (!fmt) return
-
-        const already = timeCell.getAttribute('data-dia-timefmt') === '1'
-        if (already && (timeCell.textContent || '').trim() === fmt) return
-
-        timeCell.setAttribute('data-dia-timefmt', '1')
-        timeCell.setAttribute('data-dia-rel', relRaw)
-        timeCell.setAttribute('title', `relative=${relRaw}s | epoch=${abs.toFixed(6)}`)
-        timeCell.textContent = fmt
-      })
-    }).catch(() => {})
-  }
-
-  function scheduleEnhanceWebsharkTimeColumn() {
-    if (STATE.timeEnhanceTimer) clearTimeout(STATE.timeEnhanceTimer)
-    STATE.timeEnhanceTimer = setTimeout(() => {
-      STATE.timeEnhanceTimer = null
-      enhanceWebsharkTimeColumn()
-    }, 220)
+      const fmt = formatSecondsToClock(raw)
+      if (!fmt) return
+      timeCell.setAttribute('data-dia-timefmt', '1')
+      timeCell.setAttribute('title', `${raw}s`)
+      timeCell.textContent = fmt
+    })
   }
 
   function tryGetCaptureFromUrl() {
@@ -950,12 +752,6 @@
     const addBtn = mkBtn('+ Line', addFlowRow)
     const editSelBtn = mkBtn('Edit', editSelectedFlowRow)
     const delSelBtn = mkBtn('Delete', deleteSelectedFlowRow)
-    const filterBtn = mkBtn(
-      STATE.sessionFilterSet && STATE.sessionFilterSet.size
-        ? `Session-Id (${STATE.sessionFilterSet.size})`
-        : 'Session-Id',
-      openSessionFilterDialog
-    )
     const expTxtBtn = mkBtn('Export TXT', exportFlowsTxt)
 
     if (!STATE.flowsEditMode) {
@@ -973,7 +769,6 @@
     actions.appendChild(addBtn)
     actions.appendChild(editSelBtn)
     actions.appendChild(delSelBtn)
-    actions.appendChild(filterBtn)
     actions.appendChild(expTxtBtn)
     actions.appendChild(closeBtn)
     head.appendChild(actions)
@@ -1192,15 +987,14 @@
 
     const cached = STATE.flowsCache.get(capture)
     if (cached && Array.isArray(cached) && cached.length) {
-      STATE.flowsAllRows = cached
-      STATE.flowsRows = applySessionFilterToRows(cached)
+      STATE.flowsRows = cached
       STATE.flowsSelectedIndex = -1
-      renderDiameterFlows(STATE.flowsRows)
-      if (STATE.flowsRows[0]) {
-        if (STATE.frameInput) STATE.frameInput.value = String(STATE.flowsRows[0].frame)
+      renderDiameterFlows(cached)
+      if (cached[0]) {
+        if (STATE.frameInput) STATE.frameInput.value = String(cached[0].frame)
         loadDiameter({ auto: false, keepTable: false, skipSync: true })
       }
-      STATE.status.textContent = `Diameter Flows ready (${STATE.flowsRows.length} messages, cached)`
+      STATE.status.textContent = `Diameter Flows ready (${cached.length} messages, cached)`
       return
     }
 
@@ -1238,19 +1032,18 @@
         showFlowsLoadingModal(`Parsing Diameter frames... (${done}/${total})`, 0.2 + (done / Math.max(1, total)) * 0.75)
       })
 
-      STATE.flowsAllRows = enriched
-      STATE.flowsRows = applySessionFilterToRows(enriched)
+      STATE.flowsRows = enriched
       STATE.flowsSelectedIndex = -1
       STATE.flowsCache.set(capture, enriched)
-      renderDiameterFlows(STATE.flowsRows)
+      renderDiameterFlows(enriched)
 
       // auto-show panel and load first message as requested
-      if (STATE.flowsRows[0]) {
-        if (STATE.frameInput) STATE.frameInput.value = String(STATE.flowsRows[0].frame)
-        loadDiameter({ auto: false, keepTable: false, skipSync: true })
+      if (enriched[0]) {
+        if (STATE.frameInput) STATE.frameInput.value = String(enriched[0].frame)
+        loadDiameter({ auto: false, keepTable: false })
       }
 
-      STATE.status.textContent = `Diameter Flows ready (${STATE.flowsRows.length} messages)`
+      STATE.status.textContent = `Diameter Flows ready (${enriched.length} messages)`
     } catch (e) {
       closeFlowsModal()
       STATE.status.textContent = `Diameter Flows failed: ${e.message || String(e)}`
@@ -1508,7 +1301,7 @@
     const filterTimer = setInterval(() => {
       filterTry += 1
       const ok = applyDefaultDisplayFilter()
-      scheduleEnhanceWebsharkTimeColumn()
+      enhanceWebsharkTimeColumn()
       if (ok || filterTry >= 40) clearInterval(filterTimer)
     }, 300)
 
@@ -1538,7 +1331,7 @@
       if (changed) scheduleAutoLoad()
       applyDefaultDisplayFilter()
       tryInjectDiameterFlowsMenu()
-      scheduleEnhanceWebsharkTimeColumn()
+      enhanceWebsharkTimeColumn()
     })
     mo.observe(document.body, {
       subtree: true,
