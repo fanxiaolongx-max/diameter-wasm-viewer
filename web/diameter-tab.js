@@ -1384,6 +1384,34 @@
     `
     document.body.appendChild(openOverlay)
 
+    let clickOverlayTimer = null
+    document.addEventListener(
+      'click',
+      e => {
+        const node = e.target && e.target.closest
+          ? e.target.closest('a,button,[role="row"],tr,.mat-mdc-row,.mat-row,mat-row,div,span')
+          : null
+        if (!node) return
+
+        const txt = String(node.textContent || '').trim()
+        const href = String(node.getAttribute && node.getAttribute('href') || '')
+        const router = String(node.getAttribute && node.getAttribute('routerLink') || '')
+        const maybeCapture = /\.pcapng?\b/i.test(txt) || /\.pcapng?\b/i.test(href) || /capture=/i.test(href + router)
+        if (!maybeCapture) return
+
+        const t2 = openOverlay.querySelector('#dia-open-text')
+        if (t2) t2.textContent = '正在打开文件并加载消息列表...'
+        openOverlay.style.display = 'flex'
+
+        if (clickOverlayTimer) clearTimeout(clickOverlayTimer)
+        clickOverlayTimer = setTimeout(() => {
+          if (openOverlay.style.display === 'flex') openOverlay.style.display = 'none'
+          clickOverlayTimer = null
+        }, 12000)
+      },
+      true
+    )
+
     let pending = 0
     let pendingOpen = 0
     const origFetch = window.fetch.bind(window)
