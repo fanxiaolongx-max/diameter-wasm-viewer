@@ -14,7 +14,8 @@
     flowsModal: null,
     flowsRows: null,
     menuInjectObserver: null,
-    frameMetaCache: new Map()
+    frameMetaCache: new Map(),
+    suppressFrameSyncUntil: 0
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -108,7 +109,10 @@
     const oldFrame = ((STATE.frameInput && STATE.frameInput.value) || '').trim()
 
     const frame = getCurrentFrame()
-    if (frame && STATE.frameInput) STATE.frameInput.value = frame
+    const now = Date.now()
+    if (frame && STATE.frameInput && now >= STATE.suppressFrameSyncUntil) {
+      STATE.frameInput.value = frame
+    }
 
     const cap = getCaptureName()
     if (cap && STATE.captureInput) {
@@ -414,9 +418,10 @@
     return result
   }
 
-  async function enrichRowsWithFrameMeta(rows, capture, concurrency = 8) {
+  async function enrichRowsWithFrameMeta(rows, capture, concurrency = 8, onProgress = null) {
     const out = rows.slice()
     let idx = 0
+    let done = 0
 
     async function worker() {
       while (idx < out.length) {
@@ -424,6 +429,8 @@
         const r = out[i]
         const meta = await getFrameMeta(capture, r.frame)
         out[i] = { ...r, ...meta }
+        done += 1
+        if (onProgress) onProgress(done, out.length)
       }
     }
 
@@ -436,6 +443,43 @@
       STATE.flowsModal.parentNode.removeChild(STATE.flowsModal)
     }
     STATE.flowsModal = null
+  }
+
+  function showFlowsLoadingModal(text = 'Building Diameter Flows...', ratio = null) {
+    if (!STATE.flowsModal) {
+      const modal = document.createElement('div')
+      modal.style.cssText = [
+        'position:fixed',
+        'inset:0',
+        'background:rgba(0,0,0,.38)',
+        'z-index:100000',
+        'display:flex',
+        'align-items:center',
+        'justify-content:center'
+      ].join(';')
+
+      modal.innerHTML = `
+        <div style="width:min(560px,92vw);background:#fff;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.25);overflow:hidden;">
+          <div style="padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;">Diameter Flows</div>
+          <div style="padding:16px 14px;">
+            <div id="dia-flows-loading-text" style="font-size:13px;color:#333;margin-bottom:10px;">${escapeHtml(text)}</div>
+            <div style="height:8px;background:#eceff1;border-radius:999px;overflow:hidden;">
+              <div id="dia-flows-loading-bar" style="height:100%;width:${ratio == null ? 22 : Math.max(3, Math.min(100, Math.round(ratio * 100)))}%;background:#3f51b5;transition:width .25s ease;"></div>
+            </div>
+          </div>
+        </div>
+      `
+
+      document.body.appendChild(modal)
+      STATE.flowsModal = modal
+    } else {
+      const t = STATE.flowsModal.querySelector('#dia-flows-loading-text')
+      if (t) t.textContent = text
+      const b = STATE.flowsModal.querySelector('#dia-flows-loading-bar')
+      if (b && ratio != null) {
+        b.style.width = `${Math.max(3, Math.min(100, Math.round(ratio * 100)))}%`
+      }
+    }
   }
 
   function renderDiameterFlows(rows) {
@@ -536,6 +580,7 @@
       g.style.cursor = 'pointer'
       g.addEventListener('click', async () => {
         await ensureMounted()
+        STATE.suppressFrameSyncUntil = Date.now() + 1400
         if (STATE.frameInput) STATE.frameInput.value = String(r.frame)
         await loadDiameter({ auto: false, skipSync: true })
         if (STATE.panel) {
@@ -618,6 +663,7 @@
     }
 
     STATE.status.textContent = 'Building Diameter Flows...'
+    showFlowsLoadingModal('Building Diameter Flows...', 0.12)
 
     try {
       const url = `/webshark/json?method=frames&capture=${encodeURIComponent(capture)}`
@@ -641,11 +687,15 @@
         .filter(r => !/device-watchdog\s+(request|answer)/i.test(r.info))
 
       if (!rows.length) {
+        closeFlowsModal()
         STATE.status.textContent = 'No Diameter frames found in this capture.'
         return
       }
 
-      const enriched = await enrichRowsWithFrameMeta(rows, capture)
+      showFlowsLoadingModal(`Parsing Diameter frames... (0/${rows.length})`, 0.2)
+      const enriched = await enrichRowsWithFrameMeta(rows, capture, 8, (done, total) => {
+        showFlowsLoadingModal(`Parsing Diameter frames... (${done}/${total})`, 0.2 + (done / Math.max(1, total)) * 0.75)
+      })
 
       STATE.flowsRows = enriched
       renderDiameterFlows(enriched)
@@ -658,6 +708,7 @@
 
       STATE.status.textContent = `Diameter Flows ready (${enriched.length} messages)`
     } catch (e) {
+      closeFlowsModal()
       STATE.status.textContent = `Diameter Flows failed: ${e.message || String(e)}`
     }
   }
@@ -866,6 +917,7 @@
       openFlows: openDiameterFlows,
       loadFrame: async frame => {
         await ensureMounted()
+        STATE.suppressFrameSyncUntil = Date.now() + 1400
         if (STATE.frameInput) STATE.frameInput.value = String(frame)
         await loadDiameter({ auto: false, skipSync: true })
       },
