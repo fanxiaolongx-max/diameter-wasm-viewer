@@ -29,7 +29,8 @@
     sessionFilterMode: 'multi',
     sessionFilterSet: new Set(),
     sessionFilterText: '',
-    captureEpochCache: new Map()
+    captureEpochCache: new Map(),
+    timeEnhanceTimer: null
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -410,12 +411,23 @@
         const fmt = formatAbsoluteLocal(abs)
         if (!fmt) return
 
+        const already = timeCell.getAttribute('data-dia-timefmt') === '1'
+        if (already && (timeCell.textContent || '').trim() === fmt) return
+
         timeCell.setAttribute('data-dia-timefmt', '1')
         timeCell.setAttribute('data-dia-rel', relRaw)
         timeCell.setAttribute('title', `relative=${relRaw}s | epoch=${abs.toFixed(6)}`)
         timeCell.textContent = fmt
       })
-    })
+    }).catch(() => {})
+  }
+
+  function scheduleEnhanceWebsharkTimeColumn() {
+    if (STATE.timeEnhanceTimer) clearTimeout(STATE.timeEnhanceTimer)
+    STATE.timeEnhanceTimer = setTimeout(() => {
+      STATE.timeEnhanceTimer = null
+      enhanceWebsharkTimeColumn()
+    }, 220)
   }
 
   function tryGetCaptureFromUrl() {
@@ -1496,7 +1508,7 @@
     const filterTimer = setInterval(() => {
       filterTry += 1
       const ok = applyDefaultDisplayFilter()
-      enhanceWebsharkTimeColumn()
+      scheduleEnhanceWebsharkTimeColumn()
       if (ok || filterTry >= 40) clearInterval(filterTimer)
     }, 300)
 
@@ -1526,7 +1538,7 @@
       if (changed) scheduleAutoLoad()
       applyDefaultDisplayFilter()
       tryInjectDiameterFlowsMenu()
-      enhanceWebsharkTimeColumn()
+      scheduleEnhanceWebsharkTimeColumn()
     })
     mo.observe(document.body, {
       subtree: true,
