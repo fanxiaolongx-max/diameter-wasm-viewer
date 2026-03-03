@@ -21,6 +21,7 @@
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
   const SIZE_KEY = 'diameter_fixed_panel_size_v1'
   const CAP_KEY = 'diameter_fixed_panel_capture_v1'
+  const IP_ALIAS_KEY = 'diameter_ip_alias_map_v1'
 
   function escapeHtml(s) {
     return String(s)
@@ -29,6 +30,37 @@
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#39;')
+  }
+
+  function loadIpAliasMap() {
+    try {
+      const raw = localStorage.getItem(IP_ALIAS_KEY) || '{}'
+      const obj = JSON.parse(raw)
+      if (obj && typeof obj === 'object') return obj
+    } catch {}
+    return {}
+  }
+
+  function saveIpAliasMap(map) {
+    try {
+      localStorage.setItem(IP_ALIAS_KEY, JSON.stringify(map || {}))
+    } catch {}
+  }
+
+  function getIpAlias(ip) {
+    const m = loadIpAliasMap()
+    return String((m && m[ip]) || '').trim()
+  }
+
+  function setIpAlias(ip, alias) {
+    const m = loadIpAliasMap()
+    const v = String(alias || '').trim()
+    if (!v) {
+      delete m[ip]
+    } else {
+      m[ip] = v
+    }
+    saveIpAliasMap(m)
   }
 
   function tryGetCaptureFromUrl() {
@@ -545,20 +577,55 @@
 
     participants.forEach((p, idx) => {
       const x = xOf(idx)
+      const alias = getIpAlias(p)
 
-      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-      t.setAttribute('x', String(x))
-      t.setAttribute('y', '26')
-      t.setAttribute('text-anchor', 'middle')
-      t.setAttribute('font-size', '12')
-      t.setAttribute('font-family', 'Arial, sans-serif')
-      t.textContent = p
-      svg.appendChild(t)
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      g.style.cursor = 'pointer'
+      g.addEventListener('click', () => {
+        const current = getIpAlias(p)
+        const next = window.prompt(`给 ${p} 设置显示名称（留空=清除）`, current || '')
+        if (next === null) return
+        setIpAlias(p, next)
+        if (STATE.flowsRows && STATE.flowsRows.length) renderDiameterFlows(STATE.flowsRows)
+      })
+
+      if (alias) {
+        const tAlias = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+        tAlias.setAttribute('x', String(x))
+        tAlias.setAttribute('y', '20')
+        tAlias.setAttribute('text-anchor', 'middle')
+        tAlias.setAttribute('font-size', '12')
+        tAlias.setAttribute('font-family', 'Arial, sans-serif')
+        tAlias.setAttribute('font-weight', '600')
+        tAlias.textContent = alias
+        g.appendChild(tAlias)
+
+        const tIp = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+        tIp.setAttribute('x', String(x))
+        tIp.setAttribute('y', '34')
+        tIp.setAttribute('text-anchor', 'middle')
+        tIp.setAttribute('font-size', '10')
+        tIp.setAttribute('font-family', 'Arial, sans-serif')
+        tIp.setAttribute('fill', '#666')
+        tIp.textContent = p
+        g.appendChild(tIp)
+      } else {
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+        t.setAttribute('x', String(x))
+        t.setAttribute('y', '26')
+        t.setAttribute('text-anchor', 'middle')
+        t.setAttribute('font-size', '12')
+        t.setAttribute('font-family', 'Arial, sans-serif')
+        t.textContent = p
+        g.appendChild(t)
+      }
+
+      svg.appendChild(g)
 
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
       line.setAttribute('x1', String(x))
       line.setAttribute('x2', String(x))
-      line.setAttribute('y1', '34')
+      line.setAttribute('y1', '42')
       line.setAttribute('y2', String(H - 24))
       line.setAttribute('stroke', '#c7c7c7')
       line.setAttribute('stroke-dasharray', '4 4')
@@ -636,7 +703,7 @@
 
     const foot = document.createElement('div')
     foot.style.cssText = 'padding:8px 12px;border-top:1px solid #eee;font-size:12px;color:#555;background:#fff;'
-    foot.textContent = 'Tip: click any arrow/message to auto-load that frame into DIAMETER AVP panel.'
+    foot.textContent = 'Tip: click any arrow/message to auto-load that frame into DIAMETER AVP panel. Click top IP label to set custom name (e.g., OCS / PCEF).'
 
     panel.appendChild(head)
     panel.appendChild(body)
