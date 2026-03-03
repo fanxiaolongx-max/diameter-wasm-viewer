@@ -115,6 +115,18 @@
     const tabContainer = tabs.HEX.closest('[role="tablist"]') || tabs.HEX.parentElement
     if (!tabContainer) return
 
+    // Hide original 3 tabs to avoid overlap as requested
+    for (const key of TAB_TEXTS) {
+      const el = tabs[key]
+      if (!el) continue
+      el.style.display = 'none'
+      el.style.visibility = 'hidden'
+      el.style.width = '0'
+      el.style.minWidth = '0'
+      el.style.padding = '0'
+      el.style.margin = '0'
+    }
+
     if (Array.from(tabContainer.querySelectorAll('*')).some(el => (el.textContent || '').trim().toUpperCase() === 'DIAMETER')) {
       STATE.mounted = true
       return
@@ -123,7 +135,7 @@
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.textContent = 'DIAMETER'
-    btn.style.cssText = 'margin-left:8px;padding:2px 8px;border:1px solid #ccc;background:#fff;cursor:pointer;font-size:12px;line-height:20px;border-radius:3px;'
+    btn.style.cssText = 'padding:2px 10px;border:1px solid #3f51b5;background:#3f51b5;color:#fff;cursor:pointer;font-size:12px;line-height:20px;border-radius:3px;'
     btn.onclick = async (e) => {
       e.preventDefault()
       e.stopPropagation()
