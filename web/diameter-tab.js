@@ -7,10 +7,14 @@
     captureInput: null,
     frameInput: null,
     dragHandle: null,
-    drag: { active: false, dx: 0, dy: 0 }
+    drag: { active: false, dx: 0, dy: 0 },
+    loading: false,
+    lastLoadedKey: '',
+    autoLoadTimer: null
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
+  const SIZE_KEY = 'diameter_fixed_panel_size_v1'
   const CAP_KEY = 'diameter_fixed_panel_capture_v1'
 
   function escapeHtml(s) {
@@ -25,12 +29,9 @@
   function tryGetCaptureFromUrl() {
     try {
       const u = new URL(location.href)
-
-      // ?capture=xxx.pcapng
       const qCap = u.searchParams.get('capture')
       if (qCap) return decodeURIComponent(qCap).replace(/^\/+/, '')
 
-      // #...capture=xxx.pcapng
       const hash = (u.hash || '').replace(/^#/, '')
       if (hash) {
         const hs = new URLSearchParams(hash)
@@ -38,17 +39,14 @@
         if (hCap) return decodeURIComponent(hCap).replace(/^\/+/, '')
       }
 
-      // /webshark/xxx.pcapng
       const p = decodeURIComponent(u.pathname || '')
       const m = p.match(/\/webshark\/(.+\.pcapng?|.+\.pcap)$/i)
       if (m && m[1]) return m[1].replace(/^\/+/, '')
 
-      // Full URL fallback scan
       const all = decodeURIComponent(location.href || '')
       const m2 = all.match(/([\w .\-]+\.pcapng?)/i)
       if (m2) return m2[1]
     } catch {}
-
     return ''
   }
 
@@ -56,12 +54,10 @@
     const fromUrl = tryGetCaptureFromUrl()
     if (fromUrl) return fromUrl
 
-    // body text fallback
     const txt = document.body.innerText || ''
     const m = txt.match(/([\w .\-]+\.pcapng?)/i)
     if (m) return m[1]
 
-    // persisted fallback
     try {
       const last = localStorage.getItem(CAP_KEY) || ''
       if (last) return last
@@ -77,12 +73,10 @@
   }
 
   function getCurrentFrame() {
-    // 1) common selected markers
     const selected = document.querySelector(
       '[aria-selected="true"], tr.selected, .selected, .is-selected, .packet-selected'
     )
     if (selected) {
-      // Prefer first cell text if available (packet list usually has frame no in first cell)
       const firstCell = selected.querySelector('td, [role="gridcell"], div')
       const n1 = extractFrameFromText(firstCell ? firstCell.textContent : '')
       if (n1) return n1
@@ -91,7 +85,6 @@
       if (n2) return n2
     }
 
-    // 2) details pane text fallback
     const txt = document.body.innerText || ''
     const m = txt.match(/Frame\s+(\d+)\s*:/i)
     if (m) return Number(m[1])
@@ -99,17 +92,31 @@
     return ''
   }
 
+  function currentKey() {
+    const capture = (STATE.captureInput && STATE.captureInput.value || '').trim()
+    const frame = (STATE.frameInput && STATE.frameInput.value || '').trim()
+    if (!capture || !frame) return ''
+    return `${capture}#${frame}`
+  }
+
   function syncCaptureAndFrame() {
+    const oldCap = (STATE.captureInput && STATE.captureInput.value || '').trim()
+    const oldFrame = (STATE.frameInput && STATE.frameInput.value || '').trim()
+
     const frame = getCurrentFrame()
-    if (frame) STATE.frameInput.value = frame
+    if (frame && STATE.frameInput) STATE.frameInput.value = frame
 
     const cap = getCaptureName()
-    if (cap) {
+    if (cap && STATE.captureInput) {
       STATE.captureInput.value = cap
       try {
         localStorage.setItem(CAP_KEY, cap)
       } catch {}
     }
+
+    const newCap = (STATE.captureInput && STATE.captureInput.value || '').trim()
+    const newFrame = (STATE.frameInput && STATE.frameInput.value || '').trim()
+    return oldCap !== newCap || oldFrame !== newFrame
   }
 
   async function tryAutofillCaptureFromServer() {
@@ -152,7 +159,9 @@
     return `<table style="width:100%;border-collapse:collapse">${head}<tbody>${body}</tbody></table>`
   }
 
-  async function loadDiameter() {
+  async function loadDiameter(opts = {}) {
+    if (STATE.loading) return
+
     syncCaptureAndFrame()
     await tryAutofillCaptureFromServer()
 
@@ -160,12 +169,18 @@
     const frame = (STATE.frameInput.value || '').trim()
 
     if (!capture || !frame) {
-      STATE.status.textContent = 'capture/frame 不能为空（请先在包列表选中一行，或手动填写）'
+      if (!opts.silent) {
+        STATE.status.textContent = 'capture/frame 不能为空（请先在包列表选中一行，或手动填写）'
+      }
       return
     }
 
+    const key = `${capture}#${frame}`
+    if (opts.auto && key === STATE.lastLoadedKey) return
+
+    STATE.loading = true
     STATE.status.textContent = 'Loading Diameter AVP...'
-    STATE.tableWrap.innerHTML = ''
+    if (!opts.keepTable) STATE.tableWrap.innerHTML = ''
 
     try {
       const url = `/webshark/diameter-avps?capture=${encodeURIComponent(capture)}&frame=${encodeURIComponent(frame)}`
@@ -173,12 +188,24 @@
       const data = await res.json()
       STATE.tableWrap.innerHTML = renderRows(data.rows || [])
       STATE.status.textContent = `Loaded ${Array.isArray(data.rows) ? data.rows.length : 0} AVP(s)`
+      STATE.lastLoadedKey = key
       try {
         localStorage.setItem(CAP_KEY, capture)
       } catch {}
     } catch (e) {
       STATE.status.textContent = `Load failed: ${e.message || String(e)}`
+    } finally {
+      STATE.loading = false
     }
+  }
+
+  function scheduleAutoLoad() {
+    const key = currentKey()
+    if (!key || key === STATE.lastLoadedKey) return
+    clearTimeout(STATE.autoLoadTimer)
+    STATE.autoLoadTimer = setTimeout(() => {
+      loadDiameter({ auto: true, silent: true })
+    }, 240)
   }
 
   function savePanelPos() {
@@ -187,6 +214,15 @@
     const top = parseInt(STATE.panel.style.top || '0', 10)
     if (Number.isFinite(left) && Number.isFinite(top)) {
       localStorage.setItem(POS_KEY, JSON.stringify({ left, top }))
+    }
+  }
+
+  function savePanelSize() {
+    if (!STATE.panel) return
+    const width = Math.round(STATE.panel.getBoundingClientRect().width)
+    const height = Math.round(STATE.panel.getBoundingClientRect().height)
+    if (width > 0 && height > 0) {
+      localStorage.setItem(SIZE_KEY, JSON.stringify({ width, height }))
     }
   }
 
@@ -205,6 +241,16 @@
     STATE.panel.style.top = `${top}px`
     STATE.panel.style.right = 'auto'
     STATE.panel.style.bottom = 'auto'
+  }
+
+  function applyPanelSize(size) {
+    if (!STATE.panel || !size) return
+    const maxWidth = Math.max(420, window.innerWidth - 20)
+    const maxHeight = Math.max(220, window.innerHeight - 20)
+    const width = clamp(Number(size.width) || 640, 420, maxWidth)
+    const height = clamp(Number(size.height) || 260, 220, maxHeight)
+    STATE.panel.style.width = `${width}px`
+    STATE.panel.style.height = `${height}px`
   }
 
   function initDrag() {
@@ -239,13 +285,13 @@
       if (!STATE.drag.active) return
       STATE.drag.active = false
       savePanelPos()
+      savePanelSize()
     })
   }
 
   function mount() {
     if (STATE.mounted) return
 
-    // fixed independent panel, no relation with built-in tabs
     const panel = document.createElement('div')
     panel.id = 'diameter-fixed-panel'
     panel.style.cssText = [
@@ -253,9 +299,11 @@
       'right:10px',
       'bottom:10px',
       'width:46vw',
-      'max-width:760px',
+      'max-width:980px',
+      'min-width:420px',
       'height:38vh',
       'min-height:220px',
+      'max-height:92vh',
       'background:#fff',
       'border:1px solid #3f51b5',
       'border-radius:6px',
@@ -263,13 +311,15 @@
       'z-index:99999',
       'display:flex',
       'flex-direction:column',
-      'font-size:12px'
+      'font-size:12px',
+      'resize:both',
+      'overflow:hidden'
     ].join(';')
 
     panel.innerHTML = `
       <div id="dia-drag-handle" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#3f51b5;color:#fff;font-weight:600;user-select:none;">
         <span>DIAMETER</span>
-        <span style="opacity:.85;font-weight:400;">(independent panel, draggable)</span>
+        <span style="opacity:.85;font-weight:400;">(independent panel, draggable + resizable)</span>
       </div>
       <div style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #eee;">
         <label>Capture</label>
@@ -292,28 +342,29 @@
     STATE.frameInput = panel.querySelector('#dia-frame')
 
     syncCaptureAndFrame()
-    tryAutofillCaptureFromServer()
+    tryAutofillCaptureFromServer().then(() => scheduleAutoLoad())
 
-    panel.querySelector('#dia-load').addEventListener('click', loadDiameter)
+    panel.querySelector('#dia-load').addEventListener('click', () => loadDiameter({ auto: false }))
 
-    // keep frame synced when user selects another packet (click + keyboard)
     document.addEventListener(
       'click',
       () => {
-        syncCaptureAndFrame()
+        const changed = syncCaptureAndFrame()
+        if (changed) scheduleAutoLoad()
       },
       true
     )
 
     document.addEventListener('keyup', e => {
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
-        syncCaptureAndFrame()
+        const changed = syncCaptureAndFrame()
+        if (changed) scheduleAutoLoad()
       }
     })
 
-    // fallback: observe selected-row class/aria changes
     const mo = new MutationObserver(() => {
-      syncCaptureAndFrame()
+      const changed = syncCaptureAndFrame()
+      if (changed) scheduleAutoLoad()
     })
     mo.observe(document.body, {
       subtree: true,
@@ -322,7 +373,21 @@
       attributeFilter: ['class', 'aria-selected']
     })
 
+    // Persist manual resize
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => {
+        savePanelSize()
+        savePanelPos()
+      })
+      ro.observe(panel)
+    }
+
     initDrag()
+
+    try {
+      const savedSize = JSON.parse(localStorage.getItem(SIZE_KEY) || 'null')
+      if (savedSize) applyPanelSize(savedSize)
+    } catch {}
 
     try {
       const saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
@@ -330,6 +395,10 @@
     } catch {}
 
     window.addEventListener('resize', () => {
+      try {
+        const savedSize = JSON.parse(localStorage.getItem(SIZE_KEY) || 'null')
+        if (savedSize) applyPanelSize(savedSize)
+      } catch {}
       try {
         const saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
         if (saved) applyPanelPos(saved)
