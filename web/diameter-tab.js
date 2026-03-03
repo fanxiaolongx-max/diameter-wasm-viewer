@@ -1319,14 +1319,50 @@
     STATE.menuInjectObserver = mo
   }
 
+  function ensureDiameterLauncherButton() {
+    if (STATE.reopenBtn) return STATE.reopenBtn
+    const reopenBtn = document.createElement('button')
+    reopenBtn.id = 'dia-reopen'
+    reopenBtn.textContent = 'DIAMETER'
+    reopenBtn.title = 'Open DIAMETER panel'
+    reopenBtn.style.cssText = [
+      'position:fixed',
+      'right:12px',
+      'bottom:12px',
+      'z-index:100000',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'padding:8px 12px',
+      'border:1px solid #3f51b5',
+      'background:#3f51b5',
+      'color:#fff',
+      'border-radius:16px',
+      'cursor:pointer',
+      'font-size:12px'
+    ].join(';')
+    reopenBtn.addEventListener('click', () => {
+      if (!STATE.mounted) {
+        mount()
+      }
+      showDiameterPanel()
+    })
+    document.body.appendChild(reopenBtn)
+    STATE.reopenBtn = reopenBtn
+    return reopenBtn
+  }
+
   function hideDiameterPanel() {
     if (!STATE.panel) return
     STATE.panel.style.display = 'none'
-    if (STATE.reopenBtn) STATE.reopenBtn.style.display = 'flex'
+    ensureDiameterLauncherButton().style.display = 'flex'
   }
 
   function showDiameterPanel() {
-    if (!STATE.panel) return
+    if (!STATE.panel) {
+      if (!STATE.mounted) mount()
+      if (!STATE.panel) return
+    }
     STATE.panel.style.display = 'flex'
     if (STATE.reopenBtn) STATE.reopenBtn.style.display = 'none'
   }
@@ -1469,29 +1505,9 @@
     STATE.captureInput = panel.querySelector('#dia-cap')
     STATE.frameInput = panel.querySelector('#dia-frame')
 
-    const reopenBtn = document.createElement('button')
-    reopenBtn.id = 'dia-reopen'
-    reopenBtn.textContent = 'DIAMETER'
+    const reopenBtn = ensureDiameterLauncherButton()
     reopenBtn.title = 'Reopen DIAMETER panel'
-    reopenBtn.style.cssText = [
-      'position:fixed',
-      'right:12px',
-      'bottom:12px',
-      'z-index:100000',
-      'display:none',
-      'align-items:center',
-      'justify-content:center',
-      'padding:8px 12px',
-      'border:1px solid #3f51b5',
-      'background:#3f51b5',
-      'color:#fff',
-      'border-radius:16px',
-      'cursor:pointer',
-      'font-size:12px'
-    ].join(';')
-    reopenBtn.addEventListener('click', () => showDiameterPanel())
-    document.body.appendChild(reopenBtn)
-    STATE.reopenBtn = reopenBtn
+    reopenBtn.style.display = 'none'
 
     panel.querySelector('#dia-close').addEventListener('click', e => {
       e.stopPropagation()
@@ -1594,5 +1610,17 @@
     STATE.mounted = true
   }
 
-  setTimeout(mount, 800)
+  if (document.readyState === 'loading') {
+    document.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        installNetworkProgressHint()
+        ensureDiameterLauncherButton()
+      },
+      { once: true }
+    )
+  } else {
+    installNetworkProgressHint()
+    ensureDiameterLauncherButton()
+  }
 })()
