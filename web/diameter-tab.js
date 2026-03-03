@@ -1,46 +1,11 @@
 (() => {
-  const STATE = { mounted: false, panel: null, btn: null }
-
-  const TAB_TEXTS = ['HEX', 'BINARY', 'TEXT']
-
-  function findTabElements() {
-    const nodes = Array.from(document.querySelectorAll('[role="tab"], button, .mdc-tab'))
-    const map = {}
-    for (const n of nodes) {
-      const t = (n.textContent || '').trim().toUpperCase()
-      if (TAB_TEXTS.includes(t) && !map[t]) map[t] = n
-    }
-    return map
-  }
-
-  function getCaptureName() {
-    // Prefer URL path: /webshark/<capture file>
-    try {
-      const path = decodeURIComponent(location.pathname || '')
-      const m = path.match(/\/webshark\/(.+\.pcapng?|.+\.pcap)$/i)
-      if (m && m[1]) return m[1]
-    } catch {}
-
-    // Fallback from body text
-    const txt = document.body.innerText || ''
-    const m = txt.match(/([\w .\-]+\.pcapng?)/i)
-    return m ? m[1] : null
-  }
-
-  function getCurrentFrame() {
-    // 1) Selected row in packet table
-    const selected = document.querySelector('[aria-selected="true"]')
-    if (selected) {
-      const firstNum = (selected.textContent || '').match(/\b(\d{1,7})\b/)
-      if (firstNum) return Number(firstNum[1])
-    }
-
-    // 2) Protocol tree text like "Frame 1234: ..."
-    const txt = document.body.innerText || ''
-    const m = txt.match(/Frame\s+(\d+)\s*:/i)
-    if (m) return Number(m[1])
-
-    return null
+  const STATE = {
+    mounted: false,
+    panel: null,
+    tableWrap: null,
+    status: null,
+    captureInput: null,
+    frameInput: null
   }
 
   function escapeHtml(s) {
@@ -52,6 +17,32 @@
       .replaceAll("'", '&#39;')
   }
 
+  function getCaptureName() {
+    try {
+      const path = decodeURIComponent(location.pathname || '')
+      const m = path.match(/\/webshark\/(.+\.pcapng?|.+\.pcap)$/i)
+      if (m && m[1]) return m[1]
+    } catch {}
+
+    const txt = document.body.innerText || ''
+    const m = txt.match(/([\w .\-]+\.pcapng?)/i)
+    return m ? m[1] : ''
+  }
+
+  function getCurrentFrame() {
+    const selected = document.querySelector('[aria-selected="true"]')
+    if (selected) {
+      const firstNum = (selected.textContent || '').match(/\b(\d{1,7})\b/)
+      if (firstNum) return Number(firstNum[1])
+    }
+
+    const txt = document.body.innerText || ''
+    const m = txt.match(/Frame\s+(\d+)\s*:/i)
+    if (m) return Number(m[1])
+
+    return ''
+  }
+
   function renderRows(rows) {
     if (!rows.length) return '<div style="opacity:.7">No Diameter AVP found in this frame.</div>'
     const head = '<thead><tr><th style="text-align:left;padding:4px">AVP Name</th><th style="text-align:left;padding:4px">AVP Content</th><th style="text-align:left;padding:4px">AVP Flags</th></tr></thead>'
@@ -59,96 +50,92 @@
     return `<table style="width:100%;border-collapse:collapse">${head}<tbody>${body}</tbody></table>`
   }
 
-  function ensurePanel() {
-    if (STATE.panel) return STATE.panel
-    const panel = document.createElement('div')
-    panel.id = 'diameter-avp-panel'
-    panel.style.cssText = 'display:none;max-height:260px;overflow:auto;background:#fff;border-top:1px solid #ddd;padding:8px;font-size:12px;'
-    panel.innerHTML = '<div style="opacity:.7">Select a Diameter packet row first, then click DIAMETER.</div>'
-
-    // Try to place near right-bottom content area; fallback to fixed
-    const rightPane = document.querySelector('.hex-grid, .packet-view, .mat-mdc-tab-body-content')
-    if (rightPane && rightPane.parentElement) {
-      rightPane.parentElement.appendChild(panel)
-    } else {
-      panel.style.position = 'fixed'
-      panel.style.left = '50%'
-      panel.style.bottom = '8px'
-      panel.style.width = '48%'
-      panel.style.zIndex = '9999'
-      panel.style.transform = 'translateX(-2%)'
-      panel.style.border = '1px solid #ddd'
-      document.body.appendChild(panel)
-    }
-
-    STATE.panel = panel
-    return panel
-  }
-
   async function loadDiameter() {
-    const panel = ensurePanel()
-    const capture = getCaptureName()
-    const frame = getCurrentFrame()
+    const capture = (STATE.captureInput.value || '').trim()
+    const frame = (STATE.frameInput.value || '').trim()
 
     if (!capture || !frame) {
-      panel.innerHTML = '<div style="color:#b00020">Cannot detect capture/frame. Please click a packet row first.</div>'
+      STATE.status.textContent = 'capture/frame 不能为空（先点一行包可自动填充）'
       return
     }
 
-    panel.innerHTML = '<div style="opacity:.7">Loading Diameter AVP...</div>'
+    STATE.status.textContent = 'Loading Diameter AVP...'
+    STATE.tableWrap.innerHTML = ''
+
     try {
       const url = `/webshark/diameter-avps?capture=${encodeURIComponent(capture)}&frame=${encodeURIComponent(frame)}`
       const res = await fetch(url)
       const data = await res.json()
-      panel.innerHTML = renderRows(data.rows || [])
+      STATE.tableWrap.innerHTML = renderRows(data.rows || [])
+      STATE.status.textContent = `Loaded ${Array.isArray(data.rows) ? data.rows.length : 0} AVP(s)`
     } catch (e) {
-      panel.innerHTML = `<div style="color:#b00020">Load failed: ${escapeHtml(e.message || String(e))}</div>`
+      STATE.status.textContent = `Load failed: ${e.message || String(e)}`
     }
   }
 
   function mount() {
     if (STATE.mounted) return
-    const tabs = findTabElements()
-    if (!tabs.HEX || !tabs.BINARY || !tabs.TEXT) return
 
-    // robust tab container (avoid appending inside label span)
-    const tabContainer = tabs.HEX.closest('[role="tablist"]') || tabs.HEX.parentElement
-    if (!tabContainer) return
+    // fixed independent panel, no relation with built-in tabs
+    const panel = document.createElement('div')
+    panel.id = 'diameter-fixed-panel'
+    panel.style.cssText = [
+      'position:fixed',
+      'right:10px',
+      'bottom:10px',
+      'width:46vw',
+      'max-width:760px',
+      'height:38vh',
+      'min-height:220px',
+      'background:#fff',
+      'border:1px solid #3f51b5',
+      'border-radius:6px',
+      'box-shadow:0 4px 14px rgba(0,0,0,.18)',
+      'z-index:99999',
+      'display:flex',
+      'flex-direction:column',
+      'font-size:12px'
+    ].join(';')
 
-    // Hide original 3 tabs to avoid overlap as requested
-    for (const key of TAB_TEXTS) {
-      const el = tabs[key]
-      if (!el) continue
-      el.style.display = 'none'
-      el.style.visibility = 'hidden'
-      el.style.width = '0'
-      el.style.minWidth = '0'
-      el.style.padding = '0'
-      el.style.margin = '0'
-    }
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#3f51b5;color:#fff;font-weight:600;">
+        <span>DIAMETER</span>
+        <span style="opacity:.85;font-weight:400;">(independent panel)</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #eee;">
+        <label>Capture</label>
+        <input id="dia-cap" style="flex:1;min-width:140px;padding:3px 6px" />
+        <label>Frame</label>
+        <input id="dia-frame" style="width:90px;padding:3px 6px" />
+        <button id="dia-load" style="padding:4px 10px;border:1px solid #3f51b5;background:#3f51b5;color:#fff;border-radius:4px;cursor:pointer;">Load</button>
+      </div>
+      <div id="dia-status" style="padding:6px 10px;color:#333;border-bottom:1px solid #f1f1f1;">Ready</div>
+      <div id="dia-table" style="padding:8px 10px;overflow:auto;flex:1"></div>
+    `
 
-    if (Array.from(tabContainer.querySelectorAll('*')).some(el => (el.textContent || '').trim().toUpperCase() === 'DIAMETER')) {
-      STATE.mounted = true
-      return
-    }
+    document.body.appendChild(panel)
 
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.textContent = 'DIAMETER'
-    btn.style.cssText = 'padding:2px 10px;border:1px solid #3f51b5;background:#3f51b5;color:#fff;cursor:pointer;font-size:12px;line-height:20px;border-radius:3px;'
-    btn.onclick = async (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      const panel = ensurePanel()
-      panel.style.display = 'block'
-      await loadDiameter()
-    }
+    STATE.panel = panel
+    STATE.tableWrap = panel.querySelector('#dia-table')
+    STATE.status = panel.querySelector('#dia-status')
+    STATE.captureInput = panel.querySelector('#dia-cap')
+    STATE.frameInput = panel.querySelector('#dia-frame')
 
-    tabContainer.appendChild(btn)
-    STATE.btn = btn
-    ensurePanel()
+    STATE.captureInput.value = getCaptureName()
+    STATE.frameInput.value = getCurrentFrame() || ''
+
+    panel.querySelector('#dia-load').addEventListener('click', loadDiameter)
+
+    // keep frame synced when user selects another packet
+    document.addEventListener('click', () => {
+      const frame = getCurrentFrame()
+      if (frame) STATE.frameInput.value = frame
+      const cap = getCaptureName()
+      if (cap) STATE.captureInput.value = cap
+    }, true)
+
     STATE.mounted = true
   }
 
-  setInterval(mount, 1000)
+  setTimeout(mount, 800)
 })()
