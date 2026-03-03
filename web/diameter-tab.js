@@ -215,18 +215,27 @@
   function applyDefaultDisplayFilter() {
     const target = 'diameter.cmd.code==272'
 
-    const inputs = Array.from(document.querySelectorAll('input, textarea'))
-    const candidate = inputs.find(el => {
+    // Prefer the exact WebShark display-filter input.
+    const strict = Array.from(
+      document.querySelectorAll('input[placeholder="Apply a display filter"], input.field-sticky[placeholder*="display filter"]')
+    ).filter(el => el && el.id !== 'dia-cap' && el.id !== 'dia-frame')
+
+    const visibleStrict = strict.find(el => el.offsetParent !== null) || strict[0]
+
+    // Fallback (older UI variants)
+    const fallback = Array.from(document.querySelectorAll('input, textarea')).find(el => {
       if (!el || el.id === 'dia-cap' || el.id === 'dia-frame') return false
       const text = `${el.id || ''} ${el.name || ''} ${el.placeholder || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase()
-      return text.includes('filter') || text.includes('display')
+      return text.includes('apply a display filter') || (text.includes('display') && text.includes('filter'))
     })
 
+    const candidate = visibleStrict || fallback
     if (!candidate) return false
 
     const cur = String(candidate.value || '').trim()
     if (cur) return true
 
+    candidate.focus()
     candidate.value = target
     candidate.dispatchEvent(new Event('input', { bubbles: true }))
     candidate.dispatchEvent(new Event('change', { bubbles: true }))
@@ -565,33 +574,57 @@
   }
 
   function tryInjectDiameterFlowsMenu() {
-    // Find menu-like containers where existing "Flows" actions exist.
-    const containers = Array.from(document.querySelectorAll('[role="menu"], .mat-mdc-menu-content, .mat-menu-content'))
-    containers.forEach(menu => {
-      const txt = (menu.innerText || '').toLowerCase()
-      if (!txt.includes('flows')) return
-      if (menu.querySelector('[data-dia-flows-item="1"]')) return
+    if (document.querySelector('[data-dia-flows-item="1"]')) return
 
-      const item = document.createElement('button')
-      item.type = 'button'
-      item.setAttribute('data-dia-flows-item', '1')
-      item.textContent = 'Diameter Flows'
-      item.style.cssText = [
-        'width:100%',
-        'text-align:left',
-        'padding:8px 12px',
-        'border:0',
-        'background:transparent',
-        'cursor:pointer',
-        'font:inherit'
-      ].join(';')
-      item.addEventListener('click', () => {
-        openDiameterFlows()
-      })
+    const knownItems = new Set([
+      'udp multicast streams',
+      'rtp streams',
+      'protocol hierarchy statistics',
+      'voip calls',
+      'voip conversations',
+      'expert information',
+      'all flows',
+      'icmp flows',
+      'icmpv6 flows',
+      'uim flows',
+      'tcp flows'
+    ])
 
-      const host = menu
-      host.appendChild(item)
+    const textNodes = Array.from(document.querySelectorAll('button, [role="menuitem"], .mat-mdc-menu-item, .mat-menu-item, li, div, span'))
+    const anchor = textNodes.find(el => {
+      const t = (el.textContent || '').trim().toLowerCase()
+      return knownItems.has(t)
     })
+
+    if (!anchor) return
+
+    const row = anchor.closest('button, [role="menuitem"], .mat-mdc-menu-item, .mat-menu-item, li, div') || anchor
+    const host = row.parentElement
+    if (!host) return
+
+    const tag = (row.tagName || 'button').toLowerCase()
+    const item = document.createElement(tag)
+    item.setAttribute('data-dia-flows-item', '1')
+    item.textContent = 'Diameter Flows'
+
+    // Reuse current menu item class for consistent look.
+    if (row.className) item.className = row.className
+    if (row.getAttribute('role')) item.setAttribute('role', row.getAttribute('role'))
+    if (row.getAttribute('tabindex')) item.setAttribute('tabindex', row.getAttribute('tabindex'))
+
+    // Ensure clickability even if cloned element is non-button.
+    if (tag !== 'button') {
+      item.style.cursor = 'pointer'
+      item.style.userSelect = 'none'
+    }
+
+    item.addEventListener('click', ev => {
+      ev.preventDefault()
+      ev.stopPropagation()
+      openDiameterFlows()
+    })
+
+    host.insertBefore(item, row.nextSibling)
   }
 
   function installMenuInjector() {
@@ -648,6 +681,7 @@
         <label>Frame</label>
         <input id="dia-frame" style="width:90px;padding:3px 6px" />
         <button id="dia-load" style="padding:4px 10px;border:1px solid #3f51b5;background:#3f51b5;color:#fff;border-radius:4px;cursor:pointer;">Load</button>
+        <button id="dia-flows" style="padding:4px 10px;border:1px solid #607d8b;background:#607d8b;color:#fff;border-radius:4px;cursor:pointer;">Diameter Flows</button>
       </div>
       <div id="dia-status" style="padding:6px 10px;color:#333;border-bottom:1px solid #f1f1f1;">Ready</div>
       <div id="dia-table" style="padding:8px 10px;overflow:auto;flex:1"></div>
@@ -670,10 +704,11 @@
     const filterTimer = setInterval(() => {
       filterTry += 1
       const ok = applyDefaultDisplayFilter()
-      if (ok || filterTry >= 20) clearInterval(filterTimer)
+      if (ok || filterTry >= 40) clearInterval(filterTimer)
     }, 300)
 
     panel.querySelector('#dia-load').addEventListener('click', () => loadDiameter({ auto: false }))
+    panel.querySelector('#dia-flows').addEventListener('click', () => openDiameterFlows())
 
     document.addEventListener(
       'click',
@@ -694,6 +729,8 @@
     const mo = new MutationObserver(() => {
       const changed = syncCaptureAndFrame()
       if (changed) scheduleAutoLoad()
+      applyDefaultDisplayFilter()
+      tryInjectDiameterFlowsMenu()
     })
     mo.observe(document.body, {
       subtree: true,
