@@ -17,7 +17,8 @@
     frameMetaCache: new Map(),
     suppressFrameSyncUntil: 0,
     freezeFrameSyncWhileFlowsOpen: false,
-    reopenBtn: null
+    reopenBtn: null,
+    netIndicator: null
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -894,6 +895,72 @@
     if (STATE.reopenBtn) STATE.reopenBtn.style.display = 'none'
   }
 
+  function installNetworkProgressHint() {
+    if (window.__diaFetchHooked) return
+    window.__diaFetchHooked = true
+
+    const box = document.createElement('div')
+    box.id = 'dia-net-indicator'
+    box.style.cssText = [
+      'position:fixed',
+      'left:12px',
+      'bottom:12px',
+      'z-index:100000',
+      'display:none',
+      'align-items:center',
+      'gap:8px',
+      'padding:8px 10px',
+      'border-radius:8px',
+      'background:rgba(33,33,33,.9)',
+      'color:#fff',
+      'font-size:12px'
+    ].join(';')
+    box.innerHTML = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#4caf50;animation:diaPulse 1s infinite;"></span><span id="dia-net-text">Loading...</span>'
+    document.body.appendChild(box)
+    STATE.netIndicator = box
+
+    if (!document.getElementById('dia-net-style')) {
+      const st = document.createElement('style')
+      st.id = 'dia-net-style'
+      st.textContent = '@keyframes diaPulse{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}'
+      document.head.appendChild(st)
+    }
+
+    let pending = 0
+    const origFetch = window.fetch.bind(window)
+    function classify(url) {
+      const u = String(url || '')
+      if (u.includes('/webshark/upload')) return '导入文件中...'
+      if (u.includes('method=files')) return '加载文件列表中...'
+      if (u.includes('method=frames')) return '加载消息列表中...'
+      if (u.includes('method=frame')) return '加载消息详情中...'
+      return '处理中...'
+    }
+
+    window.fetch = async (...args) => {
+      const url = args[0]
+      const hit = String(url || '').includes('/webshark/')
+      let msg = ''
+      if (hit) {
+        pending += 1
+        msg = classify(url)
+        const t = box.querySelector('#dia-net-text')
+        if (t) t.textContent = pending > 1 ? `${msg} (${pending})` : msg
+        box.style.display = 'flex'
+      }
+      try {
+        return await origFetch(...args)
+      } finally {
+        if (hit) {
+          pending = Math.max(0, pending - 1)
+          if (pending === 0) {
+            box.style.display = 'none'
+          }
+        }
+      }
+    }
+  }
+
   async function ensureMounted() {
     if (STATE.mounted) {
       showDiameterPanel()
@@ -1060,6 +1127,7 @@
     })
 
     installMenuInjector()
+    installNetworkProgressHint()
 
     // Expose APIs for future integration/testing.
     window.DiameterPanel = {
