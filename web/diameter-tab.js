@@ -11,6 +11,7 @@
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
+  const CAP_KEY = 'diameter_fixed_panel_capture_v1'
 
   function escapeHtml(s) {
     return String(s)
@@ -21,16 +22,52 @@
       .replaceAll("'", '&#39;')
   }
 
-  function getCaptureName() {
+  function tryGetCaptureFromUrl() {
     try {
-      const path = decodeURIComponent(location.pathname || '')
-      const m = path.match(/\/webshark\/(.+\.pcapng?|.+\.pcap)$/i)
-      if (m && m[1]) return m[1]
+      const u = new URL(location.href)
+
+      // ?capture=xxx.pcapng
+      const qCap = u.searchParams.get('capture')
+      if (qCap) return decodeURIComponent(qCap).replace(/^\/+/, '')
+
+      // #...capture=xxx.pcapng
+      const hash = (u.hash || '').replace(/^#/, '')
+      if (hash) {
+        const hs = new URLSearchParams(hash)
+        const hCap = hs.get('capture')
+        if (hCap) return decodeURIComponent(hCap).replace(/^\/+/, '')
+      }
+
+      // /webshark/xxx.pcapng
+      const p = decodeURIComponent(u.pathname || '')
+      const m = p.match(/\/webshark\/(.+\.pcapng?|.+\.pcap)$/i)
+      if (m && m[1]) return m[1].replace(/^\/+/, '')
+
+      // Full URL fallback scan
+      const all = decodeURIComponent(location.href || '')
+      const m2 = all.match(/([\w .\-]+\.pcapng?)/i)
+      if (m2) return m2[1]
     } catch {}
 
+    return ''
+  }
+
+  function getCaptureName() {
+    const fromUrl = tryGetCaptureFromUrl()
+    if (fromUrl) return fromUrl
+
+    // body text fallback
     const txt = document.body.innerText || ''
     const m = txt.match(/([\w .\-]+\.pcapng?)/i)
-    return m ? m[1] : ''
+    if (m) return m[1]
+
+    // persisted fallback
+    try {
+      const last = localStorage.getItem(CAP_KEY) || ''
+      if (last) return last
+    } catch {}
+
+    return ''
   }
 
   function extractFrameFromText(s) {
@@ -67,7 +104,40 @@
     if (frame) STATE.frameInput.value = frame
 
     const cap = getCaptureName()
-    if (cap) STATE.captureInput.value = cap
+    if (cap) {
+      STATE.captureInput.value = cap
+      try {
+        localStorage.setItem(CAP_KEY, cap)
+      } catch {}
+    }
+  }
+
+  async function tryAutofillCaptureFromServer() {
+    if (!STATE.captureInput) return
+    if ((STATE.captureInput.value || '').trim()) return
+
+    try {
+      const res = await fetch('/webshark/json?method=files')
+      const txt = await res.text()
+      let data = null
+      try {
+        data = JSON.parse(txt)
+      } catch {
+        return
+      }
+
+      const files = Array.isArray(data && data.files) ? data.files : []
+      if (!files.length) return
+
+      const online = files.find(f => f && f.status && f.status.online && f.name)
+      const picked = (online && online.name) || (files[0] && files[0].name) || ''
+      if (picked) {
+        STATE.captureInput.value = String(picked).replace(/^\/+/, '')
+        try {
+          localStorage.setItem(CAP_KEY, STATE.captureInput.value)
+        } catch {}
+      }
+    } catch {}
   }
 
   function renderRows(rows) {
@@ -84,6 +154,7 @@
 
   async function loadDiameter() {
     syncCaptureAndFrame()
+    await tryAutofillCaptureFromServer()
 
     const capture = (STATE.captureInput.value || '').trim()
     const frame = (STATE.frameInput.value || '').trim()
@@ -102,6 +173,9 @@
       const data = await res.json()
       STATE.tableWrap.innerHTML = renderRows(data.rows || [])
       STATE.status.textContent = `Loaded ${Array.isArray(data.rows) ? data.rows.length : 0} AVP(s)`
+      try {
+        localStorage.setItem(CAP_KEY, capture)
+      } catch {}
     } catch (e) {
       STATE.status.textContent = `Load failed: ${e.message || String(e)}`
     }
@@ -218,6 +292,7 @@
     STATE.frameInput = panel.querySelector('#dia-frame')
 
     syncCaptureAndFrame()
+    tryAutofillCaptureFromServer()
 
     panel.querySelector('#dia-load').addEventListener('click', loadDiameter)
 
