@@ -1,4 +1,4 @@
-const {PromiseSocket} = require('promise-socket');
+const { PromiseSocket } = require('promise-socket');
 const { spawn } = require('child_process');
 const JSONStream = require('JSONStream');
 const fs = require('fs');
@@ -11,8 +11,6 @@ if (_captures_path.at(-1) !== "/") {
   _captures_path += "/";
 }
 const CAPTURES_PATH = _captures_path;
-delete _captures_path
-
 // newer versions of sharkd are picky about JSON types
 // from sharkd_session.c: struct member_attribute name_array[]
 const SHARKD_INTEGER_PARAMS = new Set(["frame", "ref_frame", "prev_frame", "skip", "limit", "interval"]);
@@ -21,7 +19,7 @@ const SHARKD_TRUE_VALUES = new Set(["yes", "true", "1"]);
 
 var sharkd_objects = {};
 var AsyncLock = require('async-lock');
-var lock = new AsyncLock({timeout: 300000}); // 5 minutes timeout for the lock
+var lock = new AsyncLock({ timeout: 300000 }); // 5 minutes timeout for the lock
 var sharkd_proc = null;
 const sleep = (waitTimeInMs) => new Promise(resolve => setTimeout(resolve, waitTimeInMs));
 
@@ -29,9 +27,9 @@ const sleep = (waitTimeInMs) => new Promise(resolve => setTimeout(resolve, waitT
  * Returns array of socket names with loaded pcap file
  * @returns {[string]} Array of existing sharkd sockets with loaded file
  */
-get_loaded_sockets = function() {
+get_loaded_sockets = function () {
   let return_array = [];
-  Object.keys(sharkd_objects).forEach(function(socket_name){
+  Object.keys(sharkd_objects).forEach(function (socket_name) {
     if (sharkd_objects[socket_name].stream.readable) {
       return_array.push(socket_name);
     } else {
@@ -47,8 +45,8 @@ get_loaded_sockets = function() {
  * @param {string} capture the full path of the pcap file to load
  * @returns {PromiseSocket} sharkd socket with loaded file
  */
-get_sharkd_cli = async function(capture) {
-  let socket_name = capture.replace(CAPTURES_PATH,"");
+get_sharkd_cli = async function (capture) {
+  let socket_name = capture.replace(CAPTURES_PATH, "");
   if (socket_name.startsWith("/")) {
     socket_name = socket_name.substr(1);
   }
@@ -66,7 +64,7 @@ get_sharkd_cli = async function(capture) {
     try {
       await new_socket.connect(SHARKD_SOCKET);
     }
-    catch(err) {
+    catch (err) {
       console.log("Error trying to connect to " + SHARKD_SOCKET)
       console.log(err);
 
@@ -95,8 +93,8 @@ get_sharkd_cli = async function(capture) {
     }
     sharkd_objects[socket_name] = new_socket;
 
-    if(capture !== '') {
-      await send_req({'method':'load', 'file': capture}, sharkd_objects[socket_name]);
+    if (capture !== '') {
+      await send_req({ 'method': 'load', 'file': capture }, sharkd_objects[socket_name]);
       return sharkd_objects[socket_name];
     } else {
       return sharkd_objects[socket_name];
@@ -125,8 +123,8 @@ function _str_is_json(str) {
  * @param {PromiseSocket|null} sock optional socket to use for communication
  * @returns {string} data returned from sharkd as string
  */
-let jsonrpc_id=0;
-send_req = async function(request, sock) {
+let jsonrpc_id = 0;
+send_req = async function (request, sock) {
   let cap_file = '';
 
   // newer versions of sharkd require jsonrpc, add required fields to request
@@ -138,12 +136,12 @@ send_req = async function(request, sock) {
   // the current approach of GET params makes every value a string
   for (var key of Object.keys(request)) {
     if (SHARKD_INTEGER_PARAMS.has(key)) {
-      if(typeof request[key] === "string" || request[key] instanceof String) {
+      if (typeof request[key] === "string" || request[key] instanceof String) {
         request[key] = parseInt(request[key]);
       }
     }
     if (SHARKD_BOOLEAN_PARAMS.has(key)) {
-      if(typeof request[key] === "string" || request[key] instanceof String) {
+      if (typeof request[key] === "string" || request[key] instanceof String) {
         request[key] = SHARKD_TRUE_VALUES.has(request[key]);
       }
     }
@@ -151,7 +149,7 @@ send_req = async function(request, sock) {
 
   if ("capture" in request) {
     if (request.capture.includes('..')) {
-      return JSON.stringify({"err": 1, "errstr": "Nope"});
+      return JSON.stringify({ "err": 1, "errstr": "Nope" });
     }
 
     let req_capture = request.capture;
@@ -168,21 +166,21 @@ send_req = async function(request, sock) {
 
     // verify that pcap exists
     if (fs.existsSync(cap_file) === false) {
-      return JSON.stringify({"err": 1, "errstr": "Nope"});
+      return JSON.stringify({ "err": 1, "errstr": "Nope" });
     }
   }
 
   async function _send_req_internal() {
     let new_sock = sock;
-    if (typeof(new_sock) === 'undefined') {
+    if (typeof (new_sock) === 'undefined') {
       new_sock = await get_sharkd_cli(cap_file);
     }
 
     if (new_sock === null) {
-      return JSON.stringify({"err": 1, "errstr": `cannot connect to sharkd using socket: ${SHARKD_SOCKET}`});
+      return JSON.stringify({ "err": 1, "errstr": `cannot connect to sharkd using socket: ${SHARKD_SOCKET}` });
     }
     try {
-      await new_sock.write(JSON.stringify(request)+"\n");
+      await new_sock.write(JSON.stringify(request) + "\n");
     } catch (err) {
       console.log("Error writing to sharkd socket")
       console.log(err)
@@ -211,26 +209,39 @@ send_req = async function(request, sock) {
 async function readAndParseSocket(socket) {
   return new Promise((resolve, reject) => {
     const stream = socket.stream;
-    const parser = JSONStream.parse();
 
     let data = '';
 
-    stream.on('data', (chunk) => {
-      data += chunk;
-      parser.write(chunk);
-    });
+    const onData = (chunk) => {
+      data += chunk.toString('utf8');
 
-    parser.on('data', (parsedData) => {
-      resolve(parsedData);
-    });
+      // console.log(`[readAndParseSocket] Received chunk of length ${chunk.length}, total buffered: ${data.length}`);
 
-    parser.on('error', (err) => {
+      if (data.includes('\n')) {
+        // console.log(`[readAndParseSocket] Newline detected. Processing...`);
+        stream.removeListener('data', onData);
+        stream.removeListener('error', onError);
+        try {
+          // split by newline in case there's extra data (though sharkd should be 1 response per lock)
+          let jsonString = data.split('\n')[0];
+          // console.log(`[readAndParseSocket] parsing JSON of size ${jsonString.length}`);
+          resolve(JSON.parse(jsonString));
+        } catch (e) {
+          console.error(`[readAndParseSocket] JSON parse error:`, e.message);
+          reject(e);
+        }
+      }
+    };
+
+    const onError = (err) => {
+      console.error(`[readAndParseSocket] stream error:`, err);
+      stream.removeListener('data', onData);
+      stream.removeListener('error', onError);
       reject(err);
-    });
+    };
 
-    stream.on('end', () => {
-      parser.end();
-    });
+    stream.on('data', onData);
+    stream.on('error', onError);
   });
 }
 

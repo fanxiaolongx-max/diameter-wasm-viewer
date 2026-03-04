@@ -1169,11 +1169,14 @@
     panel.style.cssText = [
       'width:min(1200px,96vw)',
       'height:min(86vh,900px)',
+      'min-width:600px',
+      'min-height:400px',
       'background:#fff',
       'border-radius:10px',
       'display:flex',
       'flex-direction:column',
       'box-shadow:0 8px 30px rgba(0,0,0,.25)',
+      'resize:both',
       'overflow:hidden'
     ].join(';')
 
