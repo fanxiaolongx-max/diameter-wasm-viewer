@@ -756,7 +756,7 @@
 
     if (!capture || !frame) {
       if (!opts.silent) {
-        showDiameterPanel()
+        showDiameterPanel(opts.force ? { force: true } : {})
         STATE.status.textContent = 'capture/frame 不能为空（请先在包列表选中一行，或手动填写）'
       }
       return
@@ -765,8 +765,7 @@
     const key = `${capture}#${frame}`
     if (opts.auto && key === STATE.lastLoadedKey) return
 
-    console.log(`[DIA-DEBUG] loadDiameter triggering panel show for frame ${frame} (auto: ${!!opts.auto})`)
-    showDiameterPanel()
+    showDiameterPanel(opts.force ? { force: true } : {})
     STATE.loading = true
     STATE.status.textContent = 'Loading Diameter AVP...'
     if (!opts.keepTable) STATE.tableWrap.innerHTML = ''
@@ -1712,7 +1711,8 @@
     reopenBtn.id = 'dia-reopen'
     reopenBtn.textContent = 'DIAMETER'
     reopenBtn.title = 'Open DIAMETER panel'
-    reopenBtn.style.cssText = [
+
+    const STYLE_BASE = [
       'position:fixed',
       'right:12px',
       'bottom:12px',
@@ -1721,18 +1721,35 @@
       'align-items:center',
       'justify-content:center',
       'padding:8px 12px',
-      'border:1px solid #3f51b5',
-      'background:#3f51b5',
-      'color:#fff',
       'border-radius:16px',
-      'cursor:pointer',
-      'font-size:12px'
+      'font-size:12px',
+      'transition:background .2s,border-color .2s,cursor .2s'
     ].join(';')
-    reopenBtn.addEventListener('click', () => {
-      if (!STATE.mounted) {
-        mount()
+
+    function syncBtnState() {
+      const onCapture = !!(window.location.hash && window.location.hash.length > 1 && window.location.hash !== '#/')
+        || window.location.search.includes('capture=')
+      if (onCapture) {
+        reopenBtn.style.cssText = STYLE_BASE + ';border:1px solid #3f51b5;background:#3f51b5;color:#fff;cursor:pointer;'
+        reopenBtn.disabled = false
+        reopenBtn.title = 'Open DIAMETER panel'
+      } else {
+        reopenBtn.style.cssText = STYLE_BASE + ';border:1px solid #9e9e9e;background:#e0e0e0;color:#9e9e9e;cursor:not-allowed;'
+        reopenBtn.disabled = true
+        reopenBtn.title = '请先打开一个 pcap 文件'
       }
-      showDiameterPanel()
+    }
+
+    syncBtnState()
+    let _lastHref = location.href
+    setInterval(() => {
+      if (location.href !== _lastHref) { _lastHref = location.href; syncBtnState() }
+    }, 400)
+
+    reopenBtn.addEventListener('click', () => {
+      if (reopenBtn.disabled) return
+      if (!STATE.mounted) mount()
+      showDiameterPanel({ force: true })
     })
     document.body.appendChild(reopenBtn)
     STATE.reopenBtn = reopenBtn
@@ -1741,18 +1758,335 @@
 
   function hideDiameterPanel() {
     if (!STATE.panel) return
+    STATE.panelManuallyClosed = true
     STATE.panel.style.display = 'none'
     ensureDiameterLauncherButton().style.display = 'flex'
   }
 
-  function showDiameterPanel() {
-    console.log('[DIA-DEBUG] showDiameterPanel called')
+  function showDiameterPanel(opts = {}) {
+    // If the user manually closed the panel, suppress auto-show unless forced.
+    if (STATE.panelManuallyClosed && !opts.force) return
+    if (opts.force) STATE.panelManuallyClosed = false
     if (!STATE.panel) {
       if (!STATE.mounted) mount()
       if (!STATE.panel) return
     }
     STATE.panel.style.display = 'flex'
     if (STATE.reopenBtn) STATE.reopenBtn.style.display = 'none'
+  }
+
+  // ── Loading Overlay on File Click ────────────────────────────────────────────
+  function installLoadingOverlay() {
+    if (document.getElementById('dia-page-overlay')) return
+
+    // Build overlay
+    const overlay = document.createElement('div')
+    overlay.id = 'dia-page-overlay'
+    overlay.style.cssText = [
+      'display:none',
+      'position:fixed',
+      'inset:0',
+      'z-index:999999',
+      'background:rgba(30,30,50,.55)',
+      'backdrop-filter:blur(2px)',
+      'align-items:center',
+      'justify-content:center',
+      'flex-direction:column',
+      'gap:18px'
+    ].join(';')
+
+    overlay.innerHTML = `
+      <style>
+        @keyframes dia-spin { to { transform: rotate(360deg); } }
+        #dia-page-overlay .dia-spinner {
+          width: 52px; height: 52px;
+          border: 5px solid rgba(255,255,255,.25);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: dia-spin .85s linear infinite;
+        }
+        #dia-page-overlay .dia-loading-text {
+          color: #fff;
+          font-size: 14px;
+          font-weight: 500;
+          font-family: Arial, sans-serif;
+          letter-spacing: .3px;
+          opacity: .9;
+        }
+      </style>
+      <div class="dia-spinner"></div>
+      <div class="dia-loading-text">正在加载...</div>
+    `
+    document.body.appendChild(overlay)
+
+    function showOverlay() { overlay.style.display = 'flex' }
+    function hideOverlay() { overlay.style.display = 'none' }
+
+    // Detect when we're on homepage
+    function onHomePage() {
+      const h = window.location.hash
+      return !h || h.length <= 1 || h === '#/'
+    }
+
+    // Hide when fetch interceptor finishes all requests (dia-fetch-done event)
+    function waitForPageReady() {
+      // Safety timeout: max 20s in case something goes wrong
+      const safetyTimer = setTimeout(hideOverlay, 20000)
+      function onFetchDone() {
+        clearTimeout(safetyTimer)
+        window.removeEventListener('dia-fetch-done', onFetchDone)
+        setTimeout(hideOverlay, 300)
+      }
+      window.addEventListener('dia-fetch-done', onFetchDone)
+    }
+
+    // Listen for file clicks on the homepage
+    document.addEventListener('click', e => {
+      if (!onHomePage()) return
+      const target = e.target
+      // Angular Material list items (file rows)
+      const isFileRow = target.closest('mat-list-item, mat-row, [mat-list-item], .mat-list-item, .mat-row')
+      if (!isFileRow) return
+      showOverlay()
+      waitForPageReady()
+    }, true)
+  }
+
+  // ── App Title Patch ──────────────────────────────────────────────────────────
+  function installAppTitlePatch() {
+    const TARGET = 'Web Shark (next generation)'
+    const REPLACEMENT = 'Web Shark Pro'
+
+    function patchTitle() {
+      // Walk all text nodes in the toolbar/h1 area
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+      let node
+      while ((node = walker.nextNode())) {
+        if (node.nodeValue && node.nodeValue.trim() === TARGET) {
+          // Replace text
+          node.nodeValue = REPLACEMENT
+          // Wrap parent element in a home link if not already done
+          const parent = node.parentElement
+          if (parent && !parent.__titlePatched) {
+            parent.__titlePatched = true
+            parent.style.cursor = 'pointer'
+            parent.title = '返回主页'
+            parent.addEventListener('click', () => { window.location.href = '/webshark/' })
+          }
+          return true
+        }
+      }
+      return false
+    }
+
+    // Try immediately
+    if (!patchTitle()) {
+      // Retry via observer until found
+      const obs = new MutationObserver(() => {
+        if (patchTitle()) obs.disconnect()
+      })
+      obs.observe(document.body, { childList: true, subtree: true, characterData: true })
+    }
+  }
+
+  // ── Custom Menu Bar ──────────────────────────────────────────────────────────
+  function installCustomMenuBar() {
+    if (document.getElementById('dia-custom-menubar')) return
+
+    // Menu config: { title, icon, items: [{icon, label, badge, onClick}] }
+    const MENUS = [
+      {
+        title: '端点统计', en: 'Endpoints',
+        items: [
+          { icon: '🔵', label: 'IP 端点列表', badge: 'Dev', onClick: () => alert('[TODO] IP 端点列表功能') },
+          { icon: '📊', label: '流量排行', badge: 'Dev', onClick: () => alert('[TODO] 流量排行功能') }
+        ]
+      },
+      {
+        title: '响应时间', en: 'Response Time',
+        items: [
+          { icon: '⏱', label: 'Diameter SRT 分析', badge: 'Dev', onClick: () => alert('[TODO] Diameter SRT 分析功能') },
+          { icon: '📈', label: '慢请求排行', badge: 'Dev', onClick: () => alert('[TODO] 慢请求排行功能') }
+        ]
+      },
+      {
+        title: '统计信息', en: 'Statistics',
+        items: [
+          { icon: '📋', label: '协议分布', badge: 'Dev', onClick: () => alert('[TODO] 协议分布功能') },
+          { icon: '📁', label: '抓包信息', badge: 'Dev', onClick: () => alert('[TODO] 抓包信息功能') }
+        ]
+      },
+      {
+        title: '导出对象', en: 'Export Objects',
+        items: [
+          { icon: '📥', label: '导出 Diameter CSV', badge: 'Dev', onClick: () => alert('[TODO] 导出 Diameter CSV') },
+          { icon: '📄', label: '导出 AVP 报告', badge: 'Dev', onClick: () => alert('[TODO] 导出 AVP 报告') }
+        ]
+      },
+      {
+        title: '其他分析', en: 'Misc',
+        items: [
+          { icon: '�', label: 'Diameter Flows 时序图', badge: '', onClick: () => { openDiameterFlows() } },
+          { icon: '�🛠', label: '专家信息', badge: 'Dev', onClick: () => alert('[TODO] 专家信息功能') },
+          { icon: '🔍', label: '高级搜索', badge: 'Dev', onClick: () => alert('[TODO] 高级搜索功能') }
+        ]
+      }
+    ]
+
+    // Build menu bar DOM
+    const bar = document.createElement('div')
+    bar.id = 'dia-custom-menubar'
+
+    // ── Home / Note 按钮（回到主页）──────────────────────────────────────────
+    const homeBtn = document.createElement('a')
+    homeBtn.href = '/webshark/'
+    homeBtn.title = '返回主页 (WebShark)'
+    homeBtn.style.cssText = [
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'width:30px',
+      'height:28px',
+      'border-radius:4px',
+      'color:#e8eaf6',
+      'font-size:17px',
+      'text-decoration:none',
+      'transition:background .15s',
+      'flex-shrink:0',
+      'margin-right:4px'
+    ].join(';')
+    homeBtn.textContent = '📄'
+    homeBtn.addEventListener('mouseenter', () => { homeBtn.style.background = 'rgba(255,255,255,.18)' })
+    homeBtn.addEventListener('mouseleave', () => { homeBtn.style.background = '' })
+    bar.appendChild(homeBtn)
+
+    // Thin separator after the home button
+    const sep = document.createElement('div')
+    sep.style.cssText = 'width:1px;height:18px;background:rgba(255,255,255,.25);margin:0 6px 0 2px;flex-shrink:0;'
+    bar.appendChild(sep)
+
+    // Track open dropdown
+    let openWrap = null
+    function closeAll() {
+      if (openWrap) {
+        openWrap.querySelector('.dia-menu-btn').classList.remove('open')
+        openWrap.querySelector('.dia-dropdown').classList.remove('open')
+        openWrap = null
+      }
+    }
+    document.addEventListener('mousedown', e => {
+      if (!e.target.closest('#dia-custom-menubar')) closeAll()
+    })
+
+    MENUS.forEach(menu => {
+      const wrap = document.createElement('div')
+      wrap.className = 'dia-menu-wrap'
+
+      const btn = document.createElement('button')
+      btn.className = 'dia-menu-btn'
+      btn.innerHTML = `${menu.title} <span style="font-size:9px;opacity:.7">▼</span>`
+      btn.title = menu.en
+
+      const dropdown = document.createElement('div')
+      dropdown.className = 'dia-dropdown'
+
+      const section = document.createElement('div')
+      section.className = 'dia-dropdown-section'
+
+      const label = document.createElement('div')
+      label.className = 'dia-dropdown-label'
+      label.textContent = menu.en
+
+      section.appendChild(label)
+
+      menu.items.forEach(item => {
+        const row = document.createElement('div')
+        row.className = 'dia-dropdown-item'
+        row.innerHTML = `<span class="dia-ico">${item.icon}</span><span>${item.label}</span><span class="dia-dev-badge">${item.badge}</span>`
+        row.addEventListener('click', () => {
+          closeAll()
+          item.onClick()
+        })
+        section.appendChild(row)
+      })
+
+      dropdown.appendChild(section)
+      wrap.appendChild(btn)
+      wrap.appendChild(dropdown)
+      bar.appendChild(wrap)
+
+      btn.addEventListener('click', e => {
+        e.stopPropagation()
+        const wasOpen = openWrap === wrap
+        closeAll()
+        if (!wasOpen) {
+          btn.classList.add('open')
+          dropdown.classList.add('open')
+          openWrap = wrap
+        }
+      })
+    })
+
+    // Hide original Angular nav menu row by scanning for the 5 known button texts
+    const HIDDEN_LABELS = new Set(['Endpoints', 'Response Time', 'Statistics', 'Export Objects', 'Misc'])
+    function hideOriginalMenus() {
+      document.querySelectorAll('button, a[role="button"], mat-toolbar button').forEach(el => {
+        const txt = (el.textContent || '').trim().replace(/\s*\(.*\)$/, '').trim()
+        if (HIDDEN_LABELS.has(txt)) {
+          el.style.setProperty('display', 'none', 'important')
+        }
+      })
+    }
+    hideOriginalMenus()
+    new MutationObserver(() => hideOriginalMenus()).observe(document.body, { childList: true, subtree: true })
+
+    // Show/hide based on URL: hide on homepage, show when a capture is open
+    function isCapturePage() {
+      // WebShark NG uses hash routing: #FileName.pcap means a capture is open
+      const hash = window.location.hash
+      if (hash && hash.length > 1 && hash !== '#/') return true
+      // Fallback: also check legacy capture= query param
+      if (window.location.search.includes('capture=')) return true
+      return false
+    }
+
+    function updateBarVisibility() {
+      const el = document.getElementById('dia-custom-menubar')
+      if (el) el.style.display = isCapturePage() ? 'flex' : 'none'
+    }
+
+    // Insert bar after the Angular toolbar
+    function insertBar() {
+      if (document.getElementById('dia-custom-menubar')) {
+        updateBarVisibility()
+        return
+      }
+      const toolbar = document.querySelector('mat-toolbar, [class*="mat-toolbar"], header nav, header')
+      if (toolbar) {
+        toolbar.parentNode.insertBefore(bar, toolbar.nextSibling)
+      } else {
+        document.body.insertBefore(bar, document.body.firstChild)
+      }
+      updateBarVisibility()
+    }
+
+    // Watch for Angular router navigation changes (URL changes)
+    let lastHref = location.href
+    setInterval(() => {
+      if (location.href !== lastHref) {
+        lastHref = location.href
+        updateBarVisibility()
+      }
+    }, 500)
+    // Also watch DOM changes (e.g., when frames table appears)
+    new MutationObserver(() => updateBarVisibility())
+      .observe(document.body, { childList: true, subtree: true })
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', insertBar, { once: true })
+    } else {
+      insertBar()
+    }
   }
 
   function installNetworkProgressHint() {
@@ -1794,10 +2128,44 @@
         '@keyframes diaPulse{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}',
         '@keyframes diaNetBar{0%{transform:translateX(-100%)}50%{transform:translateX(230%)}100%{transform:translateX(-100%)}}',
         '/* 隐藏左上角拉风箱/菜单按钮 */',
-        '[class*="mat-toolbar"] button:first-of-type, header button:first-of-type, .mat-toolbar button:first-of-type { display: none !important; }'
+        '[class*="mat-toolbar"] button:first-of-type, header button:first-of-type, .mat-toolbar button:first-of-type { display: none !important; }',
+        '/* 隐藏Angular第二排工具栏行（含 note 图标、原始菜单按钮等） */',
+        'mat-toolbar mat-toolbar-row:nth-child(2), .mat-toolbar .mat-toolbar-row:nth-child(2), mat-toolbar-row + mat-toolbar-row { display: none !important; }',
+        '/* 隐藏Angular导航区note图标组件 */',
+        'app-menu-stat, isdata > div > app-menu-stat, isdata mat-icon[mat-list-icon] { display: none !important; }',
+        '/* 隐藏原始Angular导航栏的第二行 (统计菜单行) */',
+        '#dia-hidden-nav-row { display: none !important; }',
+        /* Custom menu bar styles */
+        '#dia-custom-menubar { display:flex;align-items:center;gap:4px;padding:0 12px;height:36px;background:#3949ab;border-bottom:1px solid rgba(255,255,255,.15);position:relative;z-index:500;flex-shrink:0; }',
+        '/* Ensure Angular CDK overlays (dropdowns, settings panels) always sit above the custom menu bar */',
+        '.cdk-overlay-container { z-index:9001 !important; }',
+        '/* Fix settings panel height being truncated by the custom 36px menu bar */',
+        'mat-sidenav, mat-drawer { max-height: 100vh !important; overflow-y: auto !important; }',
+        'mat-sidenav-container, mat-drawer-container { height: calc(100vh - 36px) !important; }',
+        '/* Fix mat-menu popup (settings gear dropdown) being clipped by custom menu bar */',
+        '.mat-mdc-menu-panel { max-height: calc(100vh - 48px) !important; overflow-y: auto !important; }',
+        '/* Remove extra whitespace at top of settings popup */',
+        '.mat-mdc-menu-content { padding-top: 0 !important; padding-bottom: 0 !important; }',
+        '.dia-menu-wrap { position:relative; }',
+        '.dia-menu-btn { background:transparent;border:none;color:#e8eaf6;font-size:13px;font-weight:500;padding:4px 12px;border-radius:4px;cursor:pointer;height:28px;display:flex;align-items:center;gap:5px;white-space:nowrap;transition:background .15s; }',
+        '.dia-menu-btn:hover,.dia-menu-btn.open { background:rgba(255,255,255,.18); }',
+        '.dia-menu-btn .dia-badge { font-size:10px;background:rgba(255,255,255,.25);padding:1px 5px;border-radius:8px;margin-left:3px; }',
+        '.dia-dropdown { position:absolute;top:calc(100% + 4px);left:0;min-width:220px;background:#fff;border-radius:6px;box-shadow:0 4px 20px rgba(0,0,0,.22);overflow:hidden;display:none;z-index:99999; }',
+        '.dia-dropdown.open { display:block; }',
+        '.dia-dropdown-section { padding:4px 0; }',
+        '.dia-dropdown-label { font-size:10px;color:#9e9e9e;padding:6px 14px 2px;font-weight:600;text-transform:uppercase;letter-spacing:.6px; }',
+        '.dia-dropdown-item { display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:13px;color:#212121;cursor:pointer;transition:background .12s; }',
+        '.dia-dropdown-item:hover { background:#f5f5f5; }',
+        '.dia-dropdown-item .dia-ico { font-size:15px;opacity:.7; }',
+        '.dia-dropdown-divider { height:1px;background:#eeeeee;margin:3px 0; }',
+        '.dia-dev-badge { font-size:9px;background:#e3f2fd;color:#1565c0;padding:1px 5px;border-radius:6px;margin-left:auto; }'
       ].join('\n')
       document.head.appendChild(st)
     }
+
+    installCustomMenuBar()
+    installAppTitlePatch()
+    installLoadingOverlay()
 
     let pending = 0
     const origFetch = window.fetch.bind(window)
@@ -1841,8 +2209,8 @@
         if (hit) {
           pending = Math.max(0, pending - 1)
           if (pending === 0) {
-            console.log(`[DIA-DEBUG] Fetch interceptor finished all. Restore panel? ${STATE.wasPanelVisible}`)
             box.style.display = 'none'
+            window.dispatchEvent(new CustomEvent('dia-fetch-done'))
             if (STATE.panel && STATE.wasPanelVisible) {
               showDiameterPanel()
             }
@@ -1855,7 +2223,7 @@
 
   async function ensureMounted(showPanel = true) {
     if (STATE.mounted) {
-      if (showPanel) showDiameterPanel()
+      if (showPanel) showDiameterPanel({ force: true })
       return
     }
     mount()
