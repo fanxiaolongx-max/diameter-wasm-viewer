@@ -740,7 +740,6 @@
 
   async function loadDiameter(opts = {}) {
     if (STATE.loading) return
-    showDiameterPanel()
 
     if (!opts.skipSync) {
       syncCaptureAndFrame()
@@ -752,6 +751,7 @@
 
     if (!capture || !frame) {
       if (!opts.silent) {
+        showDiameterPanel()
         STATE.status.textContent = 'capture/frame 不能为空（请先在包列表选中一行，或手动填写）'
       }
       return
@@ -760,6 +760,7 @@
     const key = `${capture}#${frame}`
     if (opts.auto && key === STATE.lastLoadedKey) return
 
+    showDiameterPanel()
     STATE.loading = true
     STATE.status.textContent = 'Loading Diameter AVP...'
     if (!opts.keepTable) STATE.tableWrap.innerHTML = ''
@@ -1245,11 +1246,42 @@
     actions.appendChild(closeBtn)
     head.appendChild(actions)
 
-    // Draggable modal panel (move by header)
+    // Restore previous drag/size state if available
     let drag = { active: false, sx: 0, sy: 0, tx: 0, ty: 0, ox: 0, oy: 0 }
+    if (STATE.flowsDragState) {
+      drag.ox = STATE.flowsDragState.ox || 0
+      drag.oy = STATE.flowsDragState.oy || 0
+    }
     const applyModalOffset = () => {
       panel.style.transform = `translate(${drag.ox}px, ${drag.oy}px)`
+      STATE.flowsDragState = { ox: drag.ox, oy: drag.oy }
     }
+    if (STATE.flowsDragState) applyModalOffset()
+
+    // Restore size if we saved it recently (e.g. from resize)
+    if (STATE.flowsPanelSize) {
+      panel.style.width = STATE.flowsPanelSize.width
+      panel.style.height = STATE.flowsPanelSize.height
+    }
+
+    // Capture size continuously in case user resizes
+    const panelObserver = new ResizeObserver(() => {
+      if (panel.style.width && panel.style.height) {
+        STATE.flowsPanelSize = {
+          width: panel.style.width,
+          height: panel.style.height
+        }
+      } else {
+        // Fallback to computed if inline not set yet
+        const rect = panel.getBoundingClientRect()
+        STATE.flowsPanelSize = {
+          width: rect.width + 'px',
+          height: rect.height + 'px'
+        }
+      }
+    })
+    panelObserver.observe(panel)
+
     head.addEventListener('mousedown', e => {
       if (e.button !== 0) return
       drag.active = true
@@ -1271,6 +1303,17 @@
 
     const body = document.createElement('div')
     body.style.cssText = 'flex:1;overflow:auto;padding:8px;background:#fafafa;'
+
+    // Restore scroll position
+    if (STATE.flowsScrollPos) {
+      setTimeout(() => {
+        body.scrollTop = STATE.flowsScrollPos.top || 0
+        body.scrollLeft = STATE.flowsScrollPos.left || 0
+      }, 0)
+    }
+    body.addEventListener('scroll', () => {
+      STATE.flowsScrollPos = { top: body.scrollTop, left: body.scrollLeft }
+    }, { passive: true })
 
     const participants = []
     const pSet = new Set()
@@ -1435,8 +1478,13 @@
     panel.appendChild(foot)
     modal.appendChild(panel)
 
-    modal.addEventListener('click', e => {
-      if (e.target === modal) closeFlowsModal()
+    let modalMouseDown = false
+    modal.addEventListener('mousedown', e => {
+      if (e.target === modal) modalMouseDown = true
+    })
+    modal.addEventListener('mouseup', e => {
+      if (e.target === modal && modalMouseDown) closeFlowsModal()
+      modalMouseDown = false
     })
 
     document.body.appendChild(modal)
@@ -1682,6 +1730,7 @@
     }
 
     let pending = 0
+    let shouldAutoShowPanel = false
     const origFetch = window.fetch.bind(window)
     function classify(url) {
       const u = String(url || '')
@@ -1700,6 +1749,9 @@
       let msg = ''
       if (hit) {
         pending += 1
+        if (u.includes('method=frames') || u.includes('method=frame') || u.includes('method=download')) {
+          shouldAutoShowPanel = true
+        }
         msg = classify(url)
         const t = box.querySelector('#dia-net-text')
         if (t) t.textContent = pending > 1 ? `${msg} (${pending})` : msg
@@ -1720,7 +1772,10 @@
           pending = Math.max(0, pending - 1)
           if (pending === 0) {
             box.style.display = 'none'
-            if (STATE.panel) showDiameterPanel()
+            if (STATE.panel && shouldAutoShowPanel) {
+              showDiameterPanel()
+            }
+            shouldAutoShowPanel = false
             if (STATE.filterApplyPending) stopDisplayFilterProgress(true)
           }
         }
@@ -1756,7 +1811,7 @@
       'border-radius:6px',
       'box-shadow:0 4px 14px rgba(0,0,0,.18)',
       'z-index:99999',
-      'display:flex',
+      'display:none',
       'flex-direction:column',
       'font-size:12px',
       'resize:both',
@@ -1792,7 +1847,7 @@
 
     const reopenBtn = ensureDiameterLauncherButton()
     reopenBtn.title = 'Reopen DIAMETER panel'
-    reopenBtn.style.display = 'none'
+    reopenBtn.style.display = 'flex'
 
     panel.querySelector('#dia-close').addEventListener('click', e => {
       e.stopPropagation()
