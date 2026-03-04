@@ -1046,6 +1046,7 @@
     let sessionId = ''
     let ccRequestType = ''
     let authApplicationId = ''
+    let epochTime = null
 
     function walk(nodes) {
       for (const n of nodes || []) {
@@ -1060,14 +1061,16 @@
         if (!authApplicationId && l.startsWith('Auth-Application-Id:')) {
           authApplicationId = l.slice('Auth-Application-Id:'.length).trim()
         }
-        if (sessionId && ccRequestType && authApplicationId) return
+        if (epochTime == null) {
+          const m = l.match(/Epoch Arrival Time:\s*([0-9]+(?:\.[0-9]+)?)/i)
+          if (m) epochTime = Number(m[1])
+        }
         walk(n.n || [])
-        if (sessionId && ccRequestType && authApplicationId) return
       }
     }
 
     walk(tree || [])
-    return { sessionId, ccRequestType, authApplicationId }
+    return { sessionId, ccRequestType, authApplicationId, epochTime }
   }
 
   async function getFrameMeta(capture, frame) {
@@ -1401,6 +1404,44 @@
       svg.appendChild(line)
     })
 
+    // Answer labels map: CCR→CCA, RAR→RAA, STR→STA, ASR→ASA, ACR→ACA, AAR→AAA
+    const REQ_ANS_MAP = { CCR: 'CCA', RAR: 'RAA', STR: 'STA', ASR: 'ASA', ACR: 'ACA', AAR: 'AAA', CER: 'CEA', DPR: 'DPA', DWR: 'DWA' }
+    const ANS_REQ_MAP = Object.fromEntries(Object.entries(REQ_ANS_MAP).map(([k, v]) => [v, k]))
+
+    // For each Answer row, scan backwards to find the MOST RECENT preceding Request
+    // of the matching type with the same session ID. This correctly handles multi-round
+    // sessions (e.g., multiple CCR-U/CCA-U pairs in the same session).
+    function calcDelta(ansRow, ansIdx) {
+      const label = rowDisplayLabel(ansRow)
+      const base = label.replace(/[-|(].*$/, '').trim()
+      const reqBase = ANS_REQ_MAP[base]
+      if (!reqBase || ansRow.epochTime == null) return ''
+      const sid = ansRow.sessionId || ''
+
+      // Walk backwards to find the closest matching request
+      for (let j = ansIdx - 1; j >= 0; j--) {
+        const r = rows[j]
+        const rLabel = rowDisplayLabel(r)
+        const rBase = rLabel.replace(/[-|(].*$/, '').trim()
+        if (rBase !== reqBase) continue
+        if ((r.sessionId || '') !== sid) continue
+        // Direction: request goes ansRow.dst → ansRow.src (reversed of answer)
+        if (r.src !== ansRow.dst || r.dst !== ansRow.src) continue
+        if (r.epochTime == null) continue
+        // Found — compute delta
+        const deltaSec = ansRow.epochTime - r.epochTime
+        if (!Number.isFinite(deltaSec) || deltaSec < 0) return ''
+        const ms = Math.round(deltaSec * 1000)
+        const m = Math.floor(ms / 60000)
+        const s = Math.floor((ms % 60000) / 1000)
+        const ms2 = ms % 1000
+        return m > 0
+          ? `+${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}.${String(ms2).padStart(3, '0')}s`
+          : `+${String(s).padStart(2, '0')}.${String(ms2).padStart(3, '0')}s`
+      }
+      return ''
+    }
+
     rows.forEach((r, i) => {
       const y = 56 + i * 38
       const sIdx = participants.indexOf(r.src)
@@ -1411,6 +1452,37 @@
       const x2 = xOf(dIdx)
       const label = rowDisplayLabel(r)
       const color = label.startsWith('CCA') || label.endsWith('Answer') ? '#2e7d32' : '#1565c0'
+
+      // ── Left-margin timing label ──────────────────────────────────────────
+      const delta = calcDelta(r, i)
+      if (delta) {
+        const td = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+        td.setAttribute('x', '8')
+        td.setAttribute('y', String(y + 4))
+        td.setAttribute('text-anchor', 'start')
+        td.setAttribute('font-size', '9.5')
+        td.setAttribute('font-family', 'Menlo, Consolas, monospace')
+        td.setAttribute('fill', '#e65100')
+        td.setAttribute('font-weight', '600')
+        td.textContent = delta
+        svg.appendChild(td)
+      } else if (r.epochTime != null) {
+        // Show absolute time for requests and any row with epoch info
+        const d = new Date(r.epochTime * 1000)
+        const hh = String(d.getUTCHours()).padStart(2, '0')
+        const mm = String(d.getUTCMinutes()).padStart(2, '0')
+        const ss = String(d.getUTCSeconds()).padStart(2, '0')
+        const ms3 = String(d.getUTCMilliseconds()).padStart(3, '0')
+        const ts = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+        ts.setAttribute('x', '8')
+        ts.setAttribute('y', String(y + 4))
+        ts.setAttribute('text-anchor', 'start')
+        ts.setAttribute('font-size', '9')
+        ts.setAttribute('font-family', 'Menlo, Consolas, monospace')
+        ts.setAttribute('fill', '#9e9e9e')
+        ts.textContent = `${hh}:${mm}:${ss}.${ms3}`
+        svg.appendChild(ts)
+      }
 
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
       g.style.cursor = 'pointer'

@@ -1,76 +1,69 @@
 (() => {
-  const KEY = 'webshark_lang'
-  const FALLBACK = 'en'
-  const MAP = {
-    zh: {
-      'Session-Id Filter': 'Session-Id 过滤',
-      'Single': '单选',
-      'Multi': '多选',
-      'Select All': '全选',
-      'Unselect All': '取消全选',
-      'Filter session-id...': '筛选 Session-Id...',
-      'No session-id matched.': '没有匹配的 Session-Id。',
-      'Clear': '清空',
-      'Cancel': '取消',
-      'Apply': '应用',
-      'Open': '打开',
-      'Close': '关闭',
-      'Search': '搜索',
-      'Filter': '过滤',
-      'Download': '下载',
-      'Upload': '上传',
-      'Export': '导出',
-      'Import': '导入',
-      'Settings': '设置',
-      'Help': '帮助',
-      'Capture': '抓包',
-      'Frame': '帧',
-      'Protocol': '协议',
-      'Source': '源地址',
-      'Destination': '目的地址',
-      'Length': '长度',
-      'Info': '信息',
-      'Apply display filter': '应用显示过滤器',
-      'Clear display filter': '清除显示过滤器'
-    },
-    en: {}
+  // 中英双语映射表：key=英文原文，value=中文翻译
+  const BILINGUAL = {
+    // ── 顶栏菜单按钮 ─────────────────────────────────────
+    'Endpoints': '端点统计',
+    'Response Time': '响应时间',
+    'Statistics': '统计信息',
+    'Export Objects': '导出对象',
+    'Misc': '其他分析',
+    // ── 通用 UI 词汇 ──────────────────────────────────────
+    'Session-Id Filter': 'Session-Id 过滤',
+    'Single': '单选',
+    'Multi': '多选',
+    'Select All': '全选',
+    'Unselect All': '取消全选',
+    'Filter session-id...': '筛选 Session-Id...',
+    'No session-id matched.': '没有匹配的 Session-Id。',
+    'Clear': '清空',
+    'Cancel': '取消',
+    'Apply': '应用',
+    'Open': '打开',
+    'Close': '关闭',
+    'Search': '搜索',
+    'Filter': '过滤',
+    'Download': '下载',
+    'Upload': '上传',
+    'Export': '导出',
+    'Import': '导入',
+    'Settings': '设置',
+    'Help': '帮助',
+    'Capture': '抓包',
+    'Frame': '帧',
+    'Protocol': '协议',
+    'Source': '源地址',
+    'Destination': '目的地址',
+    'Length': '长度',
+    'Info': '信息',
+    'Apply display filter': '应用显示过滤器',
+    'Clear display filter': '清除显示过滤器'
   }
 
-  function getLang() {
-    const v = (localStorage.getItem(KEY) || FALLBACK).toLowerCase()
-    return v === 'zh' ? 'zh' : 'en'
-  }
-
-  function setLang(lang) {
-    const v = lang === 'zh' ? 'zh' : 'en'
-    localStorage.setItem(KEY, v)
-    document.documentElement.setAttribute('lang', v === 'zh' ? 'zh-CN' : 'en')
-    applyI18n(document.body)
-  }
-
-  function t(text) {
-    const lang = getLang()
-    if (lang === 'en') return text
-    return MAP[lang][text] || text
+  // 双语格式：英文 (中文)
+  function bilingualText(en) {
+    const zh = BILINGUAL[en.trim()]
+    if (!zh) return null
+    return `${en.trim()} (${zh})`
   }
 
   function maybeTranslateTextNode(node) {
     if (!node || !node.nodeValue) return
     const raw = node.nodeValue
     if (!raw.trim()) return
-    if (!node.__i18nOrig) node.__i18nOrig = raw
-    const translated = t(node.__i18nOrig)
-    if (translated !== node.nodeValue) node.nodeValue = translated
+    // Store original
+    if (!node.__i18nOrig) node.__i18nOrig = raw.trim()
+    const result = bilingualText(node.__i18nOrig)
+    if (result && node.nodeValue !== result) node.nodeValue = result
   }
 
   function maybeTranslateAttr(el, attr) {
     if (!el || !el.getAttribute) return
     const cur = el.getAttribute(attr)
-    if (!cur) return
+    if (!cur || !cur.trim()) return
     const key = `__i18nOrig_${attr}`
-    if (!el[key]) el[key] = cur
-    const translated = t(el[key])
-    if (translated !== cur) el.setAttribute(attr, translated)
+    if (!el[key]) el[key] = cur.trim()
+    const result = bilingualText(el[key])
+    if (result && result !== cur) el.setAttribute(attr, result)
   }
 
   function applyI18n(root) {
@@ -95,16 +88,15 @@
   let timer = null
   function scheduleApply() {
     clearTimeout(timer)
-    timer = setTimeout(() => applyI18n(document.body), 100)
+    timer = setTimeout(() => applyI18n(document.body), 120)
   }
 
-  window.WEBSHARK_I18N = { t, getLang, setLang }
+  window.WEBSHARK_I18N = { bilingualText, applyI18n }
 
   document.addEventListener('DOMContentLoaded', () => {
-    setLang(getLang())
     applyI18n(document.body)
-
     const obs = new MutationObserver(() => scheduleApply())
     obs.observe(document.body, { childList: true, subtree: true, characterData: true })
   })
 })()
+
