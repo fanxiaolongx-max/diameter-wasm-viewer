@@ -98,7 +98,7 @@
     if (btn) return btn
     btn = document.createElement('button')
     btn.id = 'ws-lang-toggle'
-    btn.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:100003;background:#3f51b5;color:#fff;border:1px solid #3f51b5;border-radius:16px;padding:6px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);'
+    btn.style.cssText = 'position:fixed;right:14px;top:14px;z-index:100003;background:#3f51b5;color:#fff;border:1px solid #3f51b5;border-radius:16px;padding:6px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);'
     btn.addEventListener('click', () => {
       setLang(getLang() === 'zh' ? 'en' : 'zh')
     })
