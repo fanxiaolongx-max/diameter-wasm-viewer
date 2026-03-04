@@ -262,86 +262,100 @@
     drawList()
   }
 
-  function exportAvpCsv() {
-    const rows = Array.isArray(STATE.currentRows) ? STATE.currentRows : []
-    if (!rows.length) return
-    const head = ['AVP Name', 'AVP Content', 'AVP Flags']
-    const lines = [head.join(',')]
-    rows.forEach(r => {
-      lines.push([csvCell(r.avpName), csvCell(r.avpContent), csvCell(r.avpFlags)].join(','))
-    })
-    const base = `diameter_avp_${STATE.currentCapture || 'capture'}_f${STATE.currentFrame || 'x'}.csv`
-    downloadText(base, lines.join('\n'), 'text/csv;charset=utf-8')
-  }
-
-  function exportAvpTxt() {
-    const rows = Array.isArray(STATE.currentRows) ? STATE.currentRows : []
-    if (!rows.length) return
-    const out = []
-    out.push(`Capture: ${STATE.currentCapture || ''}`)
-    out.push(`Frame: ${STATE.currentFrame || ''}`)
-    out.push('')
-    rows.forEach((r, i) => {
-      out.push(`${i + 1}. ${r.avpName || ''}`)
-      out.push(`   Content: ${r.avpContent || ''}`)
-      out.push(`   Flags: ${r.avpFlags || ''}`)
-    })
-    const base = `diameter_avp_${STATE.currentCapture || 'capture'}_f${STATE.currentFrame || 'x'}.txt`
-    downloadText(base, out.join('\n'))
-  }
-
-  function exportAvpXlsx() {
-    const rows = Array.isArray(STATE.currentRows) ? STATE.currentRows : []
-    if (!rows.length) {
-      alert('No AVP data to export.')
-      return
-    }
-    if (!window.XLSX) {
-      alert('XLSX library not loaded. Please refresh the page and try again.')
-      return
-    }
-    try {
-      const data = rows.map(r => ({
-        'AVP Name': r.avpName || '',
-        'AVP Content': r.avpContent || '',
-        'AVP Flags': r.avpFlags || ''
-      }))
-      const ws = window.XLSX.utils.json_to_sheet(data, { header: ['AVP Name', 'AVP Content', 'AVP Flags'] })
-      const wb = window.XLSX.utils.book_new()
-      window.XLSX.utils.book_append_sheet(wb, ws, 'Diameter AVP')
-      const base = `diameter_avp_${STATE.currentCapture || 'capture'}_f${STATE.currentFrame || 'x'}_${Date.now()}.xlsx`
-      window.XLSX.writeFile(wb, base)
-    } catch (e) {
-      alert(`XLSX export failed: ${e?.message || e}`)
-    }
-  }
-
-  function exportFlowsXlsx() {
+  async function exportFlowsXlsx() {
     const rows = Array.isArray(STATE.flowsRows) ? STATE.flowsRows : []
     if (!rows.length) {
       alert('No flow data to export.')
       return
     }
-    if (!window.XLSX) {
-      alert('XLSX library not loaded. Please refresh the page and try again.')
+
+    const capture = (STATE.currentCapture || '').trim()
+    if (!capture) {
+      alert('No active capture set for Diameter Flows.')
       return
     }
+
+    if (STATE.status) STATE.status.textContent = 'Loading AVPs for Excel...'
+
+    let XLSX
     try {
-      const data = rows.map((r, i) => ({
-        '#': i + 1,
-        'Source': r.src || '',
-        'Destination': r.dst || '',
-        'Message': rowDisplayLabel(r),
-        'Frame': r.frame || '',
-        'Session-Id': r.sessionId || ''
+      XLSX = await loadSheetJs()
+    } catch (e) {
+      alert(`Failed to load XLSX library: ${e?.message || e}`)
+      return
+    }
+
+    const wb = XLSX.utils.book_new()
+    const usedNames = new Set()
+    const HEADERS = ['AVP Name', 'AVP Content', 'AVP Flags']
+
+    function makeSheetName(r, index) {
+      let base = rowDisplayLabel(r) || `Flow ${index + 1}`
+      base = String(base || '').replace(/[\\/\?\*\[\]:]/g, '_').trim()
+      if (!base) base = `Flow_${index + 1}`
+      if (base.length > 31) base = base.slice(0, 31)
+      let candidate = base
+      let counter = 2
+      while (usedNames.has(candidate)) {
+        const sfx = '_' + counter++
+        candidate = base.slice(0, Math.max(1, 31 - sfx.length)) + sfx
+      }
+      usedNames.add(candidate)
+      return candidate
+    }
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]
+      if (STATE.status) STATE.status.textContent = `Building Excel... (${i + 1}/${rows.length})`
+
+      let avpRows = []
+      try {
+        const url = `/webshark/diameter-avps?capture=${encodeURIComponent(capture)}&frame=${encodeURIComponent(r.frame)}`
+        const res = await fetch(url)
+        const data = await res.json()
+        avpRows = Array.isArray(data.rows) ? data.rows : []
+      } catch {
+        avpRows = []
+      }
+
+      const sheetName = makeSheetName(r, i)
+      const data = avpRows.map(a => ({
+        'AVP Name': a.avpName || '',
+        'AVP Content': a.avpContent || '',
+        'AVP Flags': a.avpFlags || ''
       }))
-      const ws = window.XLSX.utils.json_to_sheet(data, { header: ['#', 'Source', 'Destination', 'Message', 'Frame', 'Session-Id'] })
-      const wb = window.XLSX.utils.book_new()
-      window.XLSX.utils.book_append_sheet(wb, ws, 'Diameter Flows')
-      const base = `diameter_flows_${STATE.currentCapture || 'capture'}_${Date.now()}.xlsx`
-      window.XLSX.writeFile(wb, base)
+
+      const ws = XLSX.utils.json_to_sheet(data, { header: HEADERS })
+
+      // Auto column width based on content length (cap at 80 chars)
+      const maxW = HEADERS.map(h => h.length)
+      data.forEach(row => {
+        HEADERS.forEach((h, idx) => {
+          const v = String(row[h] || '')
+          if (v.length > maxW[idx]) maxW[idx] = v.length
+        })
+      })
+      ws['!cols'] = HEADERS.map((_, idx) => ({ wch: Math.min(80, maxW[idx] + 3) }))
+
+      // Basic styling hints via cell comments (SheetJS is mainly data-focused;
+      // consumer can further style if needed).
+      XLSX.utils.book_append_sheet(wb, ws, sheetName)
+    }
+
+    const baseName = `diameter_flows_${capture || 'capture'}.xlsx`
+    try {
+      XLSX.writeFile(wb, baseName)
+      if (STATE.status) {
+        STATE.status.textContent = 'Excel exported!'
+        setTimeout(() => {
+          if (STATE.status && STATE.status.textContent === 'Excel exported!') {
+            STATE.status.textContent = 'Ready'
+          }
+        }, 2000)
+      }
     } catch (e) {
       alert(`XLSX export failed: ${e?.message || e}`)
+      if (STATE.status) STATE.status.textContent = 'Excel export failed'
     }
   }
 
@@ -1671,9 +1685,6 @@
         <input id="dia-frame" style="width:90px;padding:3px 6px" />
         <button id="dia-load" style="padding:4px 10px;border:1px solid #3f51b5;background:#3f51b5;color:#fff;border-radius:4px;cursor:pointer;">Load</button>
         <button id="dia-flows" style="padding:4px 10px;border:1px solid #607d8b;background:#607d8b;color:#fff;border-radius:4px;cursor:pointer;">Diameter Flows</button>
-        <button id="dia-exp-csv" style="padding:4px 8px;border:1px solid #455a64;background:#455a64;color:#fff;border-radius:4px;cursor:pointer;">AVP→CSV</button>
-        <button id="dia-exp-txt" style="padding:4px 8px;border:1px solid #546e7a;background:#546e7a;color:#fff;border-radius:4px;cursor:pointer;">AVP→TXT</button>
-        <button id="dia-exp-xlsx" style="padding:4px 8px;border:1px solid #1b5e20;background:#2e7d32;color:#fff;border-radius:4px;cursor:pointer;">AVP→XLSX</button>
       </div>
       <div id="dia-status" style="padding:6px 10px;color:#333;border-bottom:1px solid #f1f1f1;">Ready</div>
       <div id="dia-table" style="padding:8px 10px;overflow:auto;flex:1"></div>
@@ -1712,9 +1723,6 @@
 
     panel.querySelector('#dia-load').addEventListener('click', () => loadDiameter({ auto: false }))
     panel.querySelector('#dia-flows').addEventListener('click', () => openDiameterFlows())
-    panel.querySelector('#dia-exp-csv').addEventListener('click', () => exportAvpCsv())
-    panel.querySelector('#dia-exp-txt').addEventListener('click', () => exportAvpTxt())
-    panel.querySelector('#dia-exp-xlsx').addEventListener('click', () => exportAvpXlsx())
 
     document.addEventListener(
       'click',
