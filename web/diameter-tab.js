@@ -322,9 +322,10 @@
     const usedNames = new Set()
     const HEADERS = ['AVP Name', 'AVP Content', 'AVP Flags']
 
-    function makeSheetName(r, index) {
-      let base = rowDisplayLabel(r) || `Flow ${index + 1}`
-      base = String(base || '').replace(/[\\/\?\*\[\]:]/g, '_').trim()
+    function makeSheetName(raw, index) {
+      // Excel sheet names: max 31 chars, cannot contain \ / ? * [ ] :
+      let base = String(raw || '').replace(/\s+/g, ' ')
+      base = base.replace(/[\\/\?\*\[\]:]/g, '_').trim()
       if (!base) base = `Flow_${index + 1}`
       if (base.length > 31) base = base.slice(0, 31)
       let candidate = base
@@ -351,7 +352,15 @@
         avpRows = []
       }
 
-      const sheetName = makeSheetName(r, i)
+      const srcAlias = getIpAlias(r.src) || r.src
+      const dstAlias = getIpAlias(r.dst) || r.dst
+      const label = rowDisplayLabel(r)
+      const authApp = String(r.authApplicationId || '').toLowerCase()
+      const iface = authApp.includes('3gpp gx') ? 'Gx' : 'Gy'
+      const suffix = getSeqDiagSuffix()
+      const lineForName = `${srcAlias}->${dstAlias}:${label}\\nRefer to ${iface} ${label} ${suffix}`
+
+      const sheetName = makeSheetName(lineForName, i)
       const data = avpRows.map(a => ({
         'AVP Name': a.avpName || '',
         'AVP Content': a.avpContent || '',
