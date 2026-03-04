@@ -40,6 +40,7 @@
   const SIZE_KEY = 'diameter_fixed_panel_size_v1'
   const CAP_KEY = 'diameter_fixed_panel_capture_v1'
   const IP_ALIAS_KEY = 'diameter_ip_alias_map_v1'
+  const SEQDIAG_SUFFIX_KEY = 'diameter_seqdiag_suffix_v1'
 
   function escapeHtml(s) {
     return String(s)
@@ -104,6 +105,38 @@
   function csvCell(v) {
     const s = String(v == null ? '' : v)
     return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s
+  }
+
+  function loadSheetJs() {
+    if (window.XLSX) return Promise.resolve(window.XLSX)
+    return new Promise((resolve, reject) => {
+      if (document.getElementById('dia-xlsx-script')) {
+        const poll = setInterval(() => {
+          if (window.XLSX) { clearInterval(poll); resolve(window.XLSX) }
+        }, 50)
+        return
+      }
+      const s = document.createElement('script')
+      s.id = 'dia-xlsx-script'
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
+      s.onload = () => resolve(window.XLSX)
+      s.onerror = () => reject(new Error('Failed to load SheetJS from CDN'))
+      document.head.appendChild(s)
+    })
+  }
+
+  function getSeqDiagSuffix() {
+    try {
+      const v = localStorage.getItem(SEQDIAG_SUFFIX_KEY)
+      if (v !== null) return v
+    } catch { }
+    return 'Normal AVP list'
+  }
+
+  function setSeqDiagSuffix(text) {
+    try {
+      localStorage.setItem(SEQDIAG_SUFFIX_KEY, String(text || ''))
+    } catch { }
   }
 
   function rowDisplayLabel(r) {
@@ -362,15 +395,26 @@
   function exportFlowsTxt() {
     const rows = Array.isArray(STATE.flowsRows) ? STATE.flowsRows : []
     if (!rows.length) return
-    const out = []
-    out.push('Diameter Flows (editable projection, no pcap changes)')
-    out.push(`Capture: ${STATE.currentCapture || ''}`)
-    out.push('')
-    rows.forEach((r, i) => {
-      out.push(`${i + 1}. ${r.src} -> ${r.dst} : ${rowDisplayLabel(r)} (#${r.frame || ''})`)
-      if (r.sessionId) out.push(`   Session-Id: ${r.sessionId}`)
+
+    const capture = (STATE.currentCapture || '').trim()
+    const suffix = getSeqDiagSuffix()
+
+    const lines = []
+    rows.forEach(r => {
+      const srcAlias = getIpAlias(r.src) || r.src
+      const dstAlias = getIpAlias(r.dst) || r.dst
+      const label = rowDisplayLabel(r)
+      const authApp = String(r.authApplicationId || '').toLowerCase()
+      const iface = authApp.includes('3gpp gx') ? 'Gx' : 'Gy'
+      lines.push(
+        `${srcAlias}->${dstAlias}:${label}\\n` +
+        `Refer to ${iface} ${label} ${suffix}`
+      )
     })
-    downloadText(`diameter_flows_${STATE.currentCapture || 'capture'}.txt`, out.join('\n'))
+
+    const text = lines.join('\n')
+    const base = `diameter_seqdiag_${capture || 'capture'}.txt`
+    downloadText(base, text)
   }
 
   function addFlowRow() {
@@ -978,6 +1022,7 @@
   function extractFrameMetaFromTree(tree) {
     let sessionId = ''
     let ccRequestType = ''
+    let authApplicationId = ''
 
     function walk(nodes) {
       for (const n of nodes || []) {
@@ -989,14 +1034,17 @@
         if (!ccRequestType && l.startsWith('CC-Request-Type:')) {
           ccRequestType = l.slice('CC-Request-Type:'.length).trim()
         }
-        if (sessionId && ccRequestType) return
+        if (!authApplicationId && l.startsWith('Auth-Application-Id:')) {
+          authApplicationId = l.slice('Auth-Application-Id:'.length).trim()
+        }
+        if (sessionId && ccRequestType && authApplicationId) return
         walk(n.n || [])
-        if (sessionId && ccRequestType) return
+        if (sessionId && ccRequestType && authApplicationId) return
       }
     }
 
     walk(tree || [])
-    return { sessionId, ccRequestType }
+    return { sessionId, ccRequestType, authApplicationId }
   }
 
   async function getFrameMeta(capture, frame) {
@@ -1146,8 +1194,15 @@
       STATE.sessionFilterSet && STATE.sessionFilterSet.size ? `Session-Id (${STATE.sessionFilterSet.size})` : 'Session-Id',
       openSessionFilterDialog
     )
-    const expTxtBtn = mkBtn('Export TXT', exportFlowsTxt)
+    const expTxtBtn = mkBtn('Export sequencediagram', exportFlowsTxt)
     const expXlsxBtn = mkBtn('Export XLSX', exportFlowsXlsx)
+    const seqCfgBtn = mkBtn('\u2699', () => {
+      const cur = getSeqDiagSuffix()
+      const next = window.prompt('Set the suffix text after message label (e.g. \"Normal AVP list\"):', cur)
+      if (next === null) return
+      setSeqDiagSuffix(next)
+    })
+    seqCfgBtn.title = 'Customize SeqDiag suffix text'
 
     if (!STATE.flowsEditMode) {
       addBtn.style.opacity = '.6'
@@ -1167,6 +1222,7 @@
     actions.appendChild(filterBtn)
     actions.appendChild(expTxtBtn)
     actions.appendChild(expXlsxBtn)
+    actions.appendChild(seqCfgBtn)
     actions.appendChild(closeBtn)
     head.appendChild(actions)
 
