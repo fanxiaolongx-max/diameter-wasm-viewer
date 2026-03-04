@@ -46,7 +46,6 @@
     localStorage.setItem(KEY, v)
     document.documentElement.setAttribute('lang', v === 'zh' ? 'zh-CN' : 'en')
     applyI18n(document.body)
-    updateButton()
   }
 
   function t(text) {
@@ -93,26 +92,6 @@
     })
   }
 
-  function createButton() {
-    let btn = document.getElementById('ws-lang-toggle')
-    if (btn) return btn
-    btn = document.createElement('button')
-    btn.id = 'ws-lang-toggle'
-    btn.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:100003;background:#3f51b5;color:#fff;border:1px solid #3f51b5;border-radius:16px;padding:6px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);'
-    btn.addEventListener('click', () => {
-      setLang(getLang() === 'zh' ? 'en' : 'zh')
-    })
-    document.body.appendChild(btn)
-    return btn
-  }
-
-  function updateButton() {
-    const btn = createButton()
-    const zh = getLang() === 'zh'
-    btn.textContent = zh ? '中文 / EN' : 'EN / 中文'
-    btn.title = zh ? '切换到英文' : 'Switch to Chinese'
-  }
-
   let timer = null
   function scheduleApply() {
     clearTimeout(timer)
@@ -123,7 +102,6 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     setLang(getLang())
-    updateButton()
     applyI18n(document.body)
 
     const obs = new MutationObserver(() => scheduleApply())

@@ -1702,11 +1702,13 @@
       () => {
         installNetworkProgressHint()
         ensureDiameterLauncherButton()
+        ensureMounted()
       },
       { once: true }
     )
   } else {
     installNetworkProgressHint()
     ensureDiameterLauncherButton()
+    ensureMounted()
   }
 })()
