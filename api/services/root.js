@@ -6,11 +6,11 @@ const sharkd_dict = require('../custom_module/sharkd_dict');
 const CAPTURES_PATH = process.env.CAPTURES_PATH || "/captures/";
 const url_re = /^https?:\/\//
 
-const download = function(url, dest, cb) {
+const download = function (url, dest, cb) {
   var file = fs.createWriteStream(dest);
-  var request = http.get(url, function(response) {
+  var request = http.get(url, function (response) {
     response.pipe(file);
-    file.on('finish', function() {
+    file.on('finish', function () {
       file.close(cb);  // close() is async, call cb after close completes.
     });
   });
@@ -25,26 +25,8 @@ module.exports = function (fastify, opts, next) {
   })
 
   fastify.get('/', async (req, res) => {
-    try {
-      const all = fs.readdirSync(CAPTURES_PATH)
-        .filter(name => name.endsWith('.pcap') || name.endsWith('.pcapng'))
-        .map(name => {
-          const full = path.join(CAPTURES_PATH, name)
-          const stat = fs.statSync(full)
-          return { name, mtime: stat.mtimeMs || stat.mtime.getTime() }
-        })
-        .sort((a, b) => b.mtime - a.mtime)
-
-      if (all.length > 0) {
-        const latest = all[0].name
-        return res.redirect(`/webshark/?capture=${encodeURIComponent(latest)}`)
-      }
-    } catch (e) {
-      // fall through to default redirect below
-    }
-
-    // Fallback: 没有找到任何 pcap 文件时，仍然进入 WebShark 首页
-    res.redirect('/webshark');
+    // 始终跳转到 /webshark/ 主页，不再自动拼接最新文件的 ?capture=
+    res.redirect('/webshark/');
   });
 
   fastify.get('/webshark/json', function (request, reply) {
@@ -52,28 +34,28 @@ module.exports = function (fastify, opts, next) {
     if (request.query && "method" in request.query) {
       if (request.query.method === 'files') {
         let files = fs.readdirSync(CAPTURES_PATH);
-        let results = {"files":[], "pwd": "."};
+        let results = { "files": [], "pwd": "." };
         let loaded_files = sharkd_dict.get_loaded_sockets();
-        files.forEach( async function(pcap_file){
+        files.forEach(async function (pcap_file) {
           if (pcap_file.endsWith('.pcap') || pcap_file.endsWith('.pcapng')) {
             /* fetch URLs to local folder */
-	    if(pcap_file.match(url_re)) {
-		  const res = await fetch(pcap_file);
-                  var filename = pcap_file.split('/').pop()
-		  const fileStream = fs.createWriteStream(CAPTURES_PATH+filename);
-		  await new Promise((resolve, reject) => {
-		      res.body.pipe(fileStream);
-		      res.body.on("error", reject);
-		      fileStream.on("finish", resolve);
-		    });
-		  pcap_file=filename;
-	    }
+            if (pcap_file.match(url_re)) {
+              const res = await fetch(pcap_file);
+              var filename = pcap_file.split('/').pop()
+              const fileStream = fs.createWriteStream(CAPTURES_PATH + filename);
+              await new Promise((resolve, reject) => {
+                res.body.pipe(fileStream);
+                res.body.on("error", reject);
+                fileStream.on("finish", resolve);
+              });
+              pcap_file = filename;
+            }
 
             let pcap_stats = fs.statSync(CAPTURES_PATH + pcap_file);
             if (loaded_files.includes(pcap_file)) {
-              results.files.push({"name": pcap_file, "size": pcap_stats.size, "status": {"online": true}});
+              results.files.push({ "name": pcap_file, "size": pcap_stats.size, "status": { "online": true } });
             } else {
-              results.files.push({"name": pcap_file, "size": pcap_stats.size});
+              results.files.push({ "name": pcap_file, "size": pcap_stats.size });
             }
           }
         });
@@ -81,7 +63,7 @@ module.exports = function (fastify, opts, next) {
       } else if (request.query.method === 'download') {
         if ("capture" in request.query) {
           if (request.query.capture.includes('..')) {
-            reply.send(JSON.stringify({"err": 1, "errstr": "Nope"}));
+            reply.send(JSON.stringify({ "err": 1, "errstr": "Nope" }));
           }
 
           let cap_file = request.query.capture;
@@ -103,17 +85,17 @@ module.exports = function (fastify, opts, next) {
                   let buff = new Buffer(data.data, 'base64');
                   reply.send(buff);
                 } catch (err) {
-                  reply.send(JSON.stringify({"err": 1, "errstr": "Nope"}));
+                  reply.send(JSON.stringify({ "err": 1, "errstr": "Nope" }));
                 }
               });
             }
           } else {
-            reply.send(JSON.stringify({"err": 1, "errstr": "Nope"}));
+            reply.send(JSON.stringify({ "err": 1, "errstr": "Nope" }));
           }
         }
       } else if (
         request.query.method === 'tap' &&
-        'tap0' in request.query && 
+        'tap0' in request.query &&
         ['srt:dcerpc', 'srt:rpc', 'srt:scsi', 'rtd:megaco'].includes(request.query.tap0) // catch the four invalid requests and prevent socket failure
       ) {
         reply.send(null);

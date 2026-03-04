@@ -638,7 +638,12 @@
 
   function extractFrameFromText(s) {
     const t = String(s || '')
+    if (/bytes/i.test(t) || /\.pcap/.test(t)) {
+      console.log(`[DIA-DEBUG] extractFrameFromText ignored text: "${t.slice(0, 50)}"`)
+      return ''
+    }
     const m = t.match(/\b(\d{1,7})\b/)
+    if (m) console.log(`[DIA-DEBUG] extractFrameFromText found frame ${m[1]} from text: "${t.slice(0, 50)}"`)
     return m ? Number(m[1]) : ''
   }
 
@@ -760,6 +765,7 @@
     const key = `${capture}#${frame}`
     if (opts.auto && key === STATE.lastLoadedKey) return
 
+    console.log(`[DIA-DEBUG] loadDiameter triggering panel show for frame ${frame} (auto: ${!!opts.auto})`)
     showDiameterPanel()
     STATE.loading = true
     STATE.status.textContent = 'Loading Diameter AVP...'
@@ -1478,15 +1484,6 @@
     panel.appendChild(foot)
     modal.appendChild(panel)
 
-    let modalMouseDown = false
-    modal.addEventListener('mousedown', e => {
-      if (e.target === modal) modalMouseDown = true
-    })
-    modal.addEventListener('mouseup', e => {
-      if (e.target === modal && modalMouseDown) closeFlowsModal()
-      modalMouseDown = false
-    })
-
     document.body.appendChild(modal)
     STATE.flowsModal = modal
   }
@@ -1677,6 +1674,7 @@
   }
 
   function showDiameterPanel() {
+    console.log('[DIA-DEBUG] showDiameterPanel called')
     if (!STATE.panel) {
       if (!STATE.mounted) mount()
       if (!STATE.panel) return
@@ -1730,7 +1728,6 @@
     }
 
     let pending = 0
-    let shouldAutoShowPanel = false
     const origFetch = window.fetch.bind(window)
     function classify(url) {
       const u = String(url || '')
@@ -1748,11 +1745,12 @@
       const isUpload = u.includes('/webshark/upload')
       let msg = ''
       if (hit) {
-        pending += 1
-        if (u.includes('method=frames') || u.includes('method=frame') || u.includes('method=download')) {
-          shouldAutoShowPanel = true
+        if (pending === 0) {
+          STATE.wasPanelVisible = STATE.panel && STATE.panel.style.display !== 'none'
         }
+        pending += 1
         msg = classify(url)
+        console.log(`[DIA-DEBUG] Fetch interceptor started: ${msg} (pending: ${pending})`)
         const t = box.querySelector('#dia-net-text')
         if (t) t.textContent = pending > 1 ? `${msg} (${pending})` : msg
         box.style.display = 'flex'
@@ -1771,11 +1769,11 @@
         if (hit) {
           pending = Math.max(0, pending - 1)
           if (pending === 0) {
+            console.log(`[DIA-DEBUG] Fetch interceptor finished all. Restore panel? ${STATE.wasPanelVisible}`)
             box.style.display = 'none'
-            if (STATE.panel && shouldAutoShowPanel) {
+            if (STATE.panel && STATE.wasPanelVisible) {
               showDiameterPanel()
             }
-            shouldAutoShowPanel = false
             if (STATE.filterApplyPending) stopDisplayFilterProgress(true)
           }
         }
@@ -1783,9 +1781,9 @@
     }
   }
 
-  async function ensureMounted() {
+  async function ensureMounted(showPanel = true) {
     if (STATE.mounted) {
-      showDiameterPanel()
+      if (showPanel) showDiameterPanel()
       return
     }
     mount()
@@ -1956,13 +1954,13 @@
       () => {
         installNetworkProgressHint()
         ensureDiameterLauncherButton()
-        ensureMounted()
+        ensureMounted(false)
       },
       { once: true }
     )
   } else {
     installNetworkProgressHint()
     ensureDiameterLauncherButton()
-    ensureMounted()
+    ensureMounted(false)
   }
 })()
