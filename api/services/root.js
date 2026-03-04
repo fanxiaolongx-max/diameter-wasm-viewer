@@ -1,5 +1,6 @@
 'use strict'
 const fs = require('fs');
+const path = require('path');
 const fetch = import("node-fetch");
 const sharkd_dict = require('../custom_module/sharkd_dict');
 const CAPTURES_PATH = process.env.CAPTURES_PATH || "/captures/";
@@ -24,6 +25,25 @@ module.exports = function (fastify, opts, next) {
   })
 
   fastify.get('/', async (req, res) => {
+    try {
+      const all = fs.readdirSync(CAPTURES_PATH)
+        .filter(name => name.endsWith('.pcap') || name.endsWith('.pcapng'))
+        .map(name => {
+          const full = path.join(CAPTURES_PATH, name)
+          const stat = fs.statSync(full)
+          return { name, mtime: stat.mtimeMs || stat.mtime.getTime() }
+        })
+        .sort((a, b) => b.mtime - a.mtime)
+
+      if (all.length > 0) {
+        const latest = all[0].name
+        return res.redirect(`/webshark/?capture=${encodeURIComponent(latest)}`)
+      }
+    } catch (e) {
+      // fall through to default redirect below
+    }
+
+    // Fallback: 没有找到任何 pcap 文件时，仍然进入 WebShark 首页
     res.redirect('/webshark');
   });
 
