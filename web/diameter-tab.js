@@ -47,6 +47,14 @@
       .replaceAll("'", '&#39;')
   }
 
+  function t(s) {
+    try {
+      return window.WEBSHARK_I18N?.t ? window.WEBSHARK_I18N.t(String(s)) : String(s)
+    } catch {
+      return String(s)
+    }
+  }
+
   function loadIpAliasMap() {
     try {
       const raw = localStorage.getItem(IP_ALIAS_KEY) || '{}'
@@ -141,19 +149,19 @@
     const modeMulti = STATE.sessionFilterMode !== 'single'
 
     card.innerHTML = `
-      <div style="padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;">Session-Id Filter</div>
+      <div style="padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;">${escapeHtml(t('Session-Id Filter'))}</div>
       <div style="padding:10px 12px;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eee;flex-wrap:wrap;">
-        <label style="display:flex;align-items:center;gap:5px;font-size:12px;"><input type="radio" name="dia-s-mode" value="single" ${modeMulti ? '' : 'checked'}> Single</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:12px;"><input type="radio" name="dia-s-mode" value="multi" ${modeMulti ? 'checked' : ''}> Multi</label>
-        <button id="dia-s-select-all" style="padding:4px 8px;font-size:12px;${modeMulti ? '' : 'display:none;'}">Select All</button>
-        <button id="dia-s-unselect-all" style="padding:4px 8px;font-size:12px;${modeMulti ? '' : 'display:none;'}">Unselect All</button>
-        <input id="dia-s-search" placeholder="Filter session-id..." style="margin-left:auto;min-width:220px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;" value="${escapeHtml(STATE.sessionFilterText || '')}">
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;"><input type="radio" name="dia-s-mode" value="single" ${modeMulti ? '' : 'checked'}> ${escapeHtml(t('Single'))}</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;"><input type="radio" name="dia-s-mode" value="multi" ${modeMulti ? 'checked' : ''}> ${escapeHtml(t('Multi'))}</label>
+        <button id="dia-s-select-all" style="padding:4px 8px;font-size:12px;${modeMulti ? '' : 'display:none;'}">${escapeHtml(t('Select All'))}</button>
+        <button id="dia-s-unselect-all" style="padding:4px 8px;font-size:12px;${modeMulti ? '' : 'display:none;'}">${escapeHtml(t('Unselect All'))}</button>
+        <input id="dia-s-search" placeholder="${escapeHtml(t('Filter session-id...'))}" style="margin-left:auto;min-width:220px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;" value="${escapeHtml(STATE.sessionFilterText || '')}">
       </div>
       <div id="dia-s-list" style="padding:8px 12px;overflow:auto;flex:1;"></div>
       <div style="padding:10px 12px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid #eee;">
-        <button id="dia-s-clear" style="padding:5px 10px;">Clear</button>
-        <button id="dia-s-cancel" style="padding:5px 10px;">Cancel</button>
-        <button id="dia-s-apply" style="padding:5px 10px;background:#3f51b5;color:#fff;border:1px solid #3f51b5;border-radius:4px;">Apply</button>
+        <button id="dia-s-clear" style="padding:5px 10px;">${escapeHtml(t('Clear'))}</button>
+        <button id="dia-s-cancel" style="padding:5px 10px;">${escapeHtml(t('Cancel'))}</button>
+        <button id="dia-s-apply" style="padding:5px 10px;background:#3f51b5;color:#fff;border:1px solid #3f51b5;border-radius:4px;">${escapeHtml(t('Apply'))}</button>
       </div>
     `
 
@@ -184,7 +192,7 @@
           const t = mode === 'single' ? 'radio' : 'checkbox'
           return `<label style="display:flex;align-items:flex-start;gap:8px;padding:4px 0;font-size:12px;"><input type="${t}" name="dia-s-item" data-sid="${encodeURIComponent(s)}" ${checked}><span>${escapeHtml(s)}</span></label>`
         })
-        .join('') || '<div style="opacity:.7;font-size:12px;">No session-id matched.</div>'
+        .join('') || `<div style="opacity:.7;font-size:12px;">${escapeHtml(t('No session-id matched.'))}</div>`
 
       listEl.querySelectorAll('input[name="dia-s-item"]').forEach(inp => {
         inp.addEventListener('change', () => {
