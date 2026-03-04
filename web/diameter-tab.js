@@ -825,6 +825,22 @@
     })
   }
 
+  function parseRelSeconds(v) {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : NaN
+  }
+
+  // Format as HH:MM:SSS.MS (as requested)
+  function formatFlowGap(sec) {
+    const s = Math.max(0, Number(sec) || 0)
+    const totalMs = Math.round(s * 1000)
+    const hh = Math.floor(totalMs / 3600000)
+    const mm = Math.floor((totalMs % 3600000) / 60000)
+    const sss = Math.floor((totalMs % 60000) / 1000)
+    const ms = totalMs % 1000
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(sss).padStart(3, '0')}.${String(ms).padStart(3, '0')}`
+  }
+
   function normalizeDiameterLabel(info, ccType = '') {
     const text = String(info || '')
     const upper = text.toUpperCase()
@@ -1167,6 +1183,25 @@
 
     rows.forEach((r, i) => {
       const y = 56 + i * 38
+
+      if (i > 0) {
+        const prev = rows[i - 1]
+        const curT = parseRelSeconds(r && r.relTime)
+        const preT = parseRelSeconds(prev && prev.relTime)
+        if (Number.isFinite(curT) && Number.isFinite(preT) && curT >= preT) {
+          const gapTxt = `Δ ${formatFlowGap(curT - preT)}`
+          const gap = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+          gap.setAttribute('x', '10')
+          gap.setAttribute('y', String(y - 16))
+          gap.setAttribute('text-anchor', 'start')
+          gap.setAttribute('font-size', '10')
+          gap.setAttribute('font-family', 'Arial, sans-serif')
+          gap.setAttribute('fill', '#757575')
+          gap.textContent = gapTxt
+          svg.appendChild(gap)
+        }
+      }
+
       const sIdx = participants.indexOf(r.src)
       const dIdx = participants.indexOf(r.dst)
       if (sIdx < 0 || dIdx < 0) return
@@ -1297,6 +1332,7 @@
           const c = Array.isArray(item && item.c) ? item.c : []
           return {
             frame: Number(item.num || c[0] || 0),
+            relTime: parseRelSeconds(c[1]),
             src: String(c[2] || ''),
             dst: String(c[3] || ''),
             proto: String(c[4] || ''),
