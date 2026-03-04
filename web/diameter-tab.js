@@ -32,7 +32,8 @@
     captureEpochCache: new Map(),
     timeEnhanceTimer: null,
     filterApplyTicker: null,
-    filterApplyPending: false
+    filterApplyPending: false,
+    defaultDisplayFilterPrimed: false
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -692,16 +693,31 @@
     }, 1200)
   }
 
-  function bindDisplayFilterProgressInput() {
-    const list = Array.from(
+  function getDisplayFilterInputs() {
+    const strict = Array.from(
       document.querySelectorAll('input[placeholder="Apply a display filter"], input.field-sticky[placeholder*="display filter"]')
-    )
+    ).filter(el => el && el.id !== 'dia-cap' && el.id !== 'dia-frame')
+
+    const fallback = Array.from(document.querySelectorAll('input, textarea')).filter(el => {
+      if (!el || el.id === 'dia-cap' || el.id === 'dia-frame') return false
+      const text = `${el.id || ''} ${el.name || ''} ${el.placeholder || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase()
+      return text.includes('apply a display filter') || (text.includes('display') && text.includes('filter'))
+    })
+
+    // Merge + de-dup (keep order preference: strict first)
+    return Array.from(new Set([...strict, ...fallback]))
+  }
+
+  function bindDisplayFilterProgressInput() {
+    const list = getDisplayFilterInputs()
     list.forEach(el => {
       if (!el || el.id === 'dia-cap' || el.id === 'dia-frame') return
       if (el.dataset.diaFilterProgressBound === '1') return
       el.dataset.diaFilterProgressBound = '1'
       el.addEventListener('keydown', e => {
         if (e.key === 'Enter') {
+          // User manually applied filter; never force default filter back.
+          STATE.defaultDisplayFilterPrimed = true
           startDisplayFilterProgress()
           setTimeout(() => {
             if (STATE.filterApplyPending) stopDisplayFilterProgress(false)
@@ -712,27 +728,20 @@
   }
 
   function applyDefaultDisplayFilter() {
+    // Apply only once per page lifetime. If user clears/deletes filter later,
+    // do NOT auto-fill it again.
+    if (STATE.defaultDisplayFilterPrimed) return false
+
     const target = 'diameter.cmd.code==272'
-
-    // Prefer the exact WebShark display-filter input.
-    const strict = Array.from(
-      document.querySelectorAll('input[placeholder="Apply a display filter"], input.field-sticky[placeholder*="display filter"]')
-    ).filter(el => el && el.id !== 'dia-cap' && el.id !== 'dia-frame')
-
-    const visibleStrict = strict.find(el => el.offsetParent !== null) || strict[0]
-
-    // Fallback (older UI variants)
-    const fallback = Array.from(document.querySelectorAll('input, textarea')).find(el => {
-      if (!el || el.id === 'dia-cap' || el.id === 'dia-frame') return false
-      const text = `${el.id || ''} ${el.name || ''} ${el.placeholder || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase()
-      return text.includes('apply a display filter') || (text.includes('display') && text.includes('filter'))
-    })
-
-    const candidate = visibleStrict || fallback
+    const list = getDisplayFilterInputs()
+    const candidate = list.find(el => el.offsetParent !== null) || list[0]
     if (!candidate) return false
 
     const cur = String(candidate.value || '').trim()
-    if (cur) return true
+    if (cur) {
+      STATE.defaultDisplayFilterPrimed = true
+      return true
+    }
 
     candidate.focus()
     candidate.value = target
@@ -741,6 +750,7 @@
     candidate.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     candidate.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
 
+    STATE.defaultDisplayFilterPrimed = true
     return true
   }
 
