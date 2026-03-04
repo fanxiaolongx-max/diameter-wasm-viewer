@@ -142,9 +142,11 @@
 
     card.innerHTML = `
       <div style="padding:10px 12px;background:#3f51b5;color:#fff;font-weight:600;">Session-Id Filter</div>
-      <div style="padding:10px 12px;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eee;">
+      <div style="padding:10px 12px;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eee;flex-wrap:wrap;">
         <label style="display:flex;align-items:center;gap:5px;font-size:12px;"><input type="radio" name="dia-s-mode" value="single" ${modeMulti ? '' : 'checked'}> Single</label>
         <label style="display:flex;align-items:center;gap:5px;font-size:12px;"><input type="radio" name="dia-s-mode" value="multi" ${modeMulti ? 'checked' : ''}> Multi</label>
+        <button id="dia-s-select-all" style="padding:4px 8px;font-size:12px;${modeMulti ? '' : 'display:none;'}">Select All</button>
+        <button id="dia-s-unselect-all" style="padding:4px 8px;font-size:12px;${modeMulti ? '' : 'display:none;'}">Unselect All</button>
         <input id="dia-s-search" placeholder="Filter session-id..." style="margin-left:auto;min-width:220px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;" value="${escapeHtml(STATE.sessionFilterText || '')}">
       </div>
       <div id="dia-s-list" style="padding:8px 12px;overflow:auto;flex:1;"></div>
@@ -160,12 +162,21 @@
 
     const listEl = card.querySelector('#dia-s-list')
     const searchEl = card.querySelector('#dia-s-search')
+    const selectAllBtn = card.querySelector('#dia-s-select-all')
+    const unselectAllBtn = card.querySelector('#dia-s-unselect-all')
     const selected = new Set(Array.from(STATE.sessionFilterSet || []))
+
+    function getFilteredSessions() {
+      const kw = String(searchEl.value || '').trim().toLowerCase()
+      return sessions.filter(s => !kw || s.toLowerCase().includes(kw))
+    }
 
     function drawList() {
       const mode = card.querySelector('input[name="dia-s-mode"]:checked')?.value || 'multi'
-      const kw = String(searchEl.value || '').trim().toLowerCase()
-      const filtered = sessions.filter(s => !kw || s.toLowerCase().includes(kw))
+      const filtered = getFilteredSessions()
+
+      if (selectAllBtn) selectAllBtn.style.display = mode === 'multi' ? '' : 'none'
+      if (unselectAllBtn) unselectAllBtn.style.display = mode === 'multi' ? '' : 'none'
 
       listEl.innerHTML = filtered
         .map(s => {
@@ -192,6 +203,22 @@
     }
 
     searchEl.addEventListener('input', drawList)
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', () => {
+        const mode = card.querySelector('input[name="dia-s-mode"]:checked')?.value || 'multi'
+        if (mode !== 'multi') return
+        getFilteredSessions().forEach(s => selected.add(s))
+        drawList()
+      })
+    }
+    if (unselectAllBtn) {
+      unselectAllBtn.addEventListener('click', () => {
+        const mode = card.querySelector('input[name="dia-s-mode"]:checked')?.value || 'multi'
+        if (mode !== 'multi') return
+        getFilteredSessions().forEach(s => selected.delete(s))
+        drawList()
+      })
+    }
     card.querySelectorAll('input[name="dia-s-mode"]').forEach(r => {
       r.addEventListener('change', () => {
         if (r.value === 'single' && selected.size > 1) {
