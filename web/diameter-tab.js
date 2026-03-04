@@ -30,7 +30,9 @@
     sessionFilterSet: new Set(),
     sessionFilterText: '',
     captureEpochCache: new Map(),
-    timeEnhanceTimer: null
+    timeEnhanceTimer: null,
+    filterApplyTicker: null,
+    filterApplyPending: false
   }
 
   const POS_KEY = 'diameter_fixed_panel_pos_v1'
@@ -661,6 +663,52 @@
     STATE.autoLoadTimer = setTimeout(() => {
       loadDiameter({ auto: true, silent: true })
     }, 240)
+  }
+
+  function startDisplayFilterProgress() {
+    STATE.filterApplyPending = true
+    let step = 0
+    clearInterval(STATE.filterApplyTicker)
+    if (STATE.status) STATE.status.textContent = 'Applying display filter'
+    STATE.filterApplyTicker = setInterval(() => {
+      step = (step + 1) % 4
+      if (STATE.status && STATE.filterApplyPending) {
+        STATE.status.textContent = `Applying display filter${'.'.repeat(step)}`
+      }
+    }, 260)
+  }
+
+  function stopDisplayFilterProgress(ok = true) {
+    const wasPending = STATE.filterApplyPending
+    STATE.filterApplyPending = false
+    clearInterval(STATE.filterApplyTicker)
+    STATE.filterApplyTicker = null
+    if (!wasPending || !STATE.status) return
+    STATE.status.textContent = ok ? 'Display filter applied' : 'Display filter apply timeout'
+    setTimeout(() => {
+      if (!STATE.filterApplyPending && STATE.status && String(STATE.status.textContent || '').includes('Display filter')) {
+        STATE.status.textContent = 'Ready'
+      }
+    }, 1200)
+  }
+
+  function bindDisplayFilterProgressInput() {
+    const list = Array.from(
+      document.querySelectorAll('input[placeholder="Apply a display filter"], input.field-sticky[placeholder*="display filter"]')
+    )
+    list.forEach(el => {
+      if (!el || el.id === 'dia-cap' || el.id === 'dia-frame') return
+      if (el.dataset.diaFilterProgressBound === '1') return
+      el.dataset.diaFilterProgressBound = '1'
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          startDisplayFilterProgress()
+          setTimeout(() => {
+            if (STATE.filterApplyPending) stopDisplayFilterProgress(false)
+          }, 8000)
+        }
+      })
+    })
   }
 
   function applyDefaultDisplayFilter() {
@@ -1470,6 +1518,7 @@
           pending = Math.max(0, pending - 1)
           if (pending === 0) {
             box.style.display = 'none'
+            if (STATE.filterApplyPending) stopDisplayFilterProgress(true)
           }
         }
       }
@@ -1556,6 +1605,7 @@
     let filterTry = 0
     const filterTimer = setInterval(() => {
       filterTry += 1
+      bindDisplayFilterProgressInput()
       const ok = applyDefaultDisplayFilter()
       scheduleEnhanceWebsharkTimeColumn()
       if (ok || filterTry >= 40) clearInterval(filterTimer)
@@ -1585,6 +1635,7 @@
     const mo = new MutationObserver(() => {
       const changed = syncCaptureAndFrame()
       if (changed) scheduleAutoLoad()
+      bindDisplayFilterProgressInput()
       applyDefaultDisplayFilter()
       tryInjectDiameterFlowsMenu()
       scheduleEnhanceWebsharkTimeColumn()
