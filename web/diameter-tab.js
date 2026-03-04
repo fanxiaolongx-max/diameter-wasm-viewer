@@ -415,6 +415,13 @@
     const text = lines.join('\n')
     const base = `diameter_seqdiag_${capture || 'capture'}.txt`
     downloadText(base, text)
+
+    // 同时自动在新标签页打开 sequencediagram.org 并预填内容
+    try {
+      const encoded = encodeURIComponent(text)
+      const url = `https://sequencediagram.org/index.html#initialData=${encoded}`
+      window.open(url, '_blank')
+    } catch { }
   }
 
   function addFlowRow() {
