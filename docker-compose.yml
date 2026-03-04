@@ -16,3 +16,5 @@ services:
     environment:
       - SHARKD_SOCKET=/home/node/sharkd.sock
       - CAPTURES_PATH=/captures/
+      - NODE_OPTIONS=--max-old-space-size=4096
+    restart: unless-stopped
