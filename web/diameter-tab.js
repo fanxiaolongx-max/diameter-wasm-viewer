@@ -1642,26 +1642,39 @@
     box.id = 'dia-net-indicator'
     box.style.cssText = [
       'position:fixed',
-      'left:12px',
-      'bottom:12px',
+      'top:0',
+      'left:0',
+      'right:0',
       'z-index:100000',
       'display:none',
+      'flex-direction:column',
       'align-items:center',
-      'gap:8px',
-      'padding:8px 10px',
-      'border-radius:8px',
-      'background:rgba(33,33,33,.9)',
+      'justify-content:center',
+      'padding:12px 16px',
+      'background:linear-gradient(180deg,rgba(63,81,181,.95) 0%,rgba(48,63,159,.95) 100%)',
       'color:#fff',
-      'font-size:12px'
+      'font-size:14px',
+      'font-weight:500',
+      'box-shadow:0 2px 8px rgba(0,0,0,.2)'
     ].join(';')
-    box.innerHTML = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#4caf50;animation:diaPulse 1s infinite;"></span><span id="dia-net-text">Loading...</span>'
+    box.innerHTML = [
+      '<span id="dia-net-text" style="margin-bottom:8px;">Loading...</span>',
+      '<div style="width:100%;max-width:320px;height:6px;background:rgba(255,255,255,.25);border-radius:999px;overflow:hidden;">',
+      '<div id="dia-net-bar" style="height:100%;width:30%;background:#fff;border-radius:999px;animation:diaNetBar 1.2s ease-in-out infinite;"></div>',
+      '</div>'
+    ].join('')
     document.body.appendChild(box)
     STATE.netIndicator = box
 
     if (!document.getElementById('dia-net-style')) {
       const st = document.createElement('style')
       st.id = 'dia-net-style'
-      st.textContent = '@keyframes diaPulse{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}'
+      st.textContent = [
+        '@keyframes diaPulse{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}',
+        '@keyframes diaNetBar{0%{transform:translateX(-100%)}50%{transform:translateX(230%)}100%{transform:translateX(-100%)}}',
+        '/* 隐藏左上角拉风箱/菜单按钮 */',
+        '[class*="mat-toolbar"] button:first-of-type, header button:first-of-type, .mat-toolbar button:first-of-type { display: none !important; }'
+      ].join('\n')
       document.head.appendChild(st)
     }
 
@@ -1688,6 +1701,8 @@
         const t = box.querySelector('#dia-net-text')
         if (t) t.textContent = pending > 1 ? `${msg} (${pending})` : msg
         box.style.display = 'flex'
+        box.style.alignItems = 'center'
+        if (STATE.panel) STATE.panel.style.display = 'none'
       }
       let resp
       try {
@@ -1702,6 +1717,7 @@
           pending = Math.max(0, pending - 1)
           if (pending === 0) {
             box.style.display = 'none'
+            if (STATE.panel) showDiameterPanel()
             if (STATE.filterApplyPending) stopDisplayFilterProgress(true)
           }
         }
