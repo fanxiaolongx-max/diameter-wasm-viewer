@@ -63,14 +63,14 @@
       const raw = localStorage.getItem(IP_ALIAS_KEY) || '{}'
       const obj = JSON.parse(raw)
       if (obj && typeof obj === 'object') return obj
-    } catch {}
+    } catch { }
     return {}
   }
 
   function saveIpAliasMap(map) {
     try {
       localStorage.setItem(IP_ALIAS_KEY, JSON.stringify(map || {}))
-    } catch {}
+    } catch { }
   }
 
   function getIpAlias(ip) {
@@ -113,10 +113,10 @@
 
   function getUniqueSessionIds(rows) {
     const s = new Set()
-    ;(rows || []).forEach(r => {
-      const sid = String((r && r.sessionId) || '').trim()
-      if (sid) s.add(sid)
-    })
+      ; (rows || []).forEach(r => {
+        const sid = String((r && r.sessionId) || '').trim()
+        if (sid) s.add(sid)
+      })
     return Array.from(s).sort((a, b) => a.localeCompare(b))
   }
 
@@ -290,6 +290,61 @@
     downloadText(base, out.join('\n'))
   }
 
+  function exportAvpXlsx() {
+    const rows = Array.isArray(STATE.currentRows) ? STATE.currentRows : []
+    if (!rows.length) {
+      alert('No AVP data to export.')
+      return
+    }
+    if (!window.XLSX) {
+      alert('XLSX library not loaded. Please refresh the page and try again.')
+      return
+    }
+    try {
+      const data = rows.map(r => ({
+        'AVP Name': r.avpName || '',
+        'AVP Content': r.avpContent || '',
+        'AVP Flags': r.avpFlags || ''
+      }))
+      const ws = window.XLSX.utils.json_to_sheet(data, { header: ['AVP Name', 'AVP Content', 'AVP Flags'] })
+      const wb = window.XLSX.utils.book_new()
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Diameter AVP')
+      const base = `diameter_avp_${STATE.currentCapture || 'capture'}_f${STATE.currentFrame || 'x'}_${Date.now()}.xlsx`
+      window.XLSX.writeFile(wb, base)
+    } catch (e) {
+      alert(`XLSX export failed: ${e?.message || e}`)
+    }
+  }
+
+  function exportFlowsXlsx() {
+    const rows = Array.isArray(STATE.flowsRows) ? STATE.flowsRows : []
+    if (!rows.length) {
+      alert('No flow data to export.')
+      return
+    }
+    if (!window.XLSX) {
+      alert('XLSX library not loaded. Please refresh the page and try again.')
+      return
+    }
+    try {
+      const data = rows.map((r, i) => ({
+        '#': i + 1,
+        'Source': r.src || '',
+        'Destination': r.dst || '',
+        'Message': rowDisplayLabel(r),
+        'Frame': r.frame || '',
+        'Session-Id': r.sessionId || ''
+      }))
+      const ws = window.XLSX.utils.json_to_sheet(data, { header: ['#', 'Source', 'Destination', 'Message', 'Frame', 'Session-Id'] })
+      const wb = window.XLSX.utils.book_new()
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Diameter Flows')
+      const base = `diameter_flows_${STATE.currentCapture || 'capture'}_${Date.now()}.xlsx`
+      window.XLSX.writeFile(wb, base)
+    } catch (e) {
+      alert(`XLSX export failed: ${e?.message || e}`)
+    }
+  }
+
   function exportFlowsTxt() {
     const rows = Array.isArray(STATE.flowsRows) ? STATE.flowsRows : []
     if (!rows.length) return
@@ -456,7 +511,7 @@
           timeCell.textContent = fmt
         })
       })
-      .catch(() => {})
+      .catch(() => { })
   }
 
   function scheduleEnhanceWebsharkTimeColumn() {
@@ -487,7 +542,7 @@
       const all = decodeURIComponent(location.href || '')
       const m2 = all.match(/([\w .\-]+\.pcapng?)/i)
       if (m2) return m2[1]
-    } catch {}
+    } catch { }
     return ''
   }
 
@@ -502,7 +557,7 @@
     try {
       const last = localStorage.getItem(CAP_KEY) || ''
       if (last) return last
-    } catch {}
+    } catch { }
 
     return ''
   }
@@ -560,7 +615,7 @@
       STATE.captureInput.value = cap
       try {
         localStorage.setItem(CAP_KEY, cap)
-      } catch {}
+      } catch { }
     }
 
     const newCap = ((STATE.captureInput && STATE.captureInput.value) || '').trim()
@@ -591,9 +646,9 @@
         STATE.captureInput.value = String(picked).replace(/^\/+/, '')
         try {
           localStorage.setItem(CAP_KEY, STATE.captureInput.value)
-        } catch {}
+        } catch { }
       }
-    } catch {}
+    } catch { }
   }
 
   function renderRows(rows) {
@@ -648,7 +703,7 @@
       STATE.lastLoadedKey = key
       try {
         localStorage.setItem(CAP_KEY, capture)
-      } catch {}
+      } catch { }
     } catch (e) {
       STATE.status.textContent = `Load failed: ${e.message || String(e)}`
     } finally {
@@ -857,20 +912,51 @@
       return false
     })
 
-    if (upper.includes('CREDIT-CONTROL REQUEST')) {
+    // Credit-Control (Gy/Gx) messages:
+    // - Wireshark verbose: "Credit-Control Request", "Credit-Control Answer"
+    // - Short form (info field): "CCR-(INITIAL_REQUEST (1))", "CCA-(TERMINATION_REQUEST (3))", etc.
+    const isCcrLike =
+      upper.includes('CREDIT-CONTROL REQUEST') ||
+      upper.startsWith('CCR-') ||
+      upper.startsWith('CCR ')
+    const isCcaLike =
+      upper.includes('CREDIT-CONTROL ANSWER') ||
+      upper.startsWith('CCA-') ||
+      upper.startsWith('CCA ')
+
+    if (isCcrLike) {
+      // 优先使用缩写：CCR-I / CCR-U / CCR-T / CCR-E
+      if (suf) return `CCR-${suf}`
+      // 如果 ccType 文本比较完整但没匹配到关键字，退回原始显示
       if (ccTypeText) return `CCR-(${ccTypeText})`
-      return suf ? `CCR-${suf}` : 'CCR'
+      return 'CCR'
     }
-    if (upper.includes('CREDIT-CONTROL ANSWER')) {
+    if (isCcaLike) {
+      if (suf) return `CCA-${suf}`
       if (ccTypeText) return `CCA-(${ccTypeText})`
-      return suf ? `CCA-${suf}` : 'CCA'
+      return 'CCA'
     }
-    if (upper.includes('RE-AUTH-REQUEST')) return 'RAR'
-    if (upper.includes('RE-AUTH-ANSWER')) return 'RAA'
-    if (upper.includes('DEVICE-WATCHDOG REQUEST')) return 'DWR'
-    if (upper.includes('DEVICE-WATCHDOG ANSWER')) return 'DWA'
-    if (upper.includes('CAPABILITIES-EXCHANGE REQUEST')) return 'CER'
-    if (upper.includes('CAPABILITIES-EXCHANGE ANSWER')) return 'CEA'
+    // Re-Auth: match both "RE-AUTH-REQUEST" (wireshark) and "RE-AUTH REQUEST" (full name)
+    if (upper.includes('RE-AUTH-REQUEST') || upper.includes('RE-AUTH REQUEST')) return 'RAR'
+    if (upper.includes('RE-AUTH-ANSWER') || upper.includes('RE-AUTH ANSWER')) return 'RAA'
+    // Abort-Session
+    if (upper.includes('ABORT-SESSION-REQUEST') || upper.includes('ABORT-SESSION REQUEST')) return 'ASR'
+    if (upper.includes('ABORT-SESSION-ANSWER') || upper.includes('ABORT-SESSION ANSWER')) return 'ASA'
+    // Session-Termination
+    if (upper.includes('SESSION-TERMINATION-REQUEST') || upper.includes('SESSION-TERMINATION REQUEST')) return 'STR'
+    if (upper.includes('SESSION-TERMINATION-ANSWER') || upper.includes('SESSION-TERMINATION ANSWER')) return 'STA'
+    // Accounting
+    if (upper.includes('ACCOUNTING-REQUEST') || upper.includes('ACCOUNTING REQUEST')) return 'ACR'
+    if (upper.includes('ACCOUNTING-ANSWER') || upper.includes('ACCOUNTING ANSWER')) return 'ACA'
+    // AA
+    if (upper.includes('AA-REQUEST') || (upper.startsWith('AA ') && upper.includes('REQUEST'))) return 'AAR'
+    if (upper.includes('AA-ANSWER') || (upper.startsWith('AA ') && upper.includes('ANSWER'))) return 'AAA'
+    if (upper.includes('DEVICE-WATCHDOG REQUEST') || upper.includes('DEVICE-WATCHDOG-REQUEST')) return 'DWR'
+    if (upper.includes('DEVICE-WATCHDOG ANSWER') || upper.includes('DEVICE-WATCHDOG-ANSWER')) return 'DWA'
+    if (upper.includes('CAPABILITIES-EXCHANGE REQUEST') || upper.includes('CAPABILITIES-EXCHANGE-REQUEST')) return 'CER'
+    if (upper.includes('CAPABILITIES-EXCHANGE ANSWER') || upper.includes('CAPABILITIES-EXCHANGE-ANSWER')) return 'CEA'
+    if (upper.includes('DISCONNECT-PEER-REQUEST')) return 'DPR'
+    if (upper.includes('DISCONNECT-PEER-ANSWER')) return 'DPA'
 
     return text.replace(/\s*\|.*$/, '').trim() || 'DIAMETER'
   }
@@ -1047,6 +1133,7 @@
       openSessionFilterDialog
     )
     const expTxtBtn = mkBtn('Export TXT', exportFlowsTxt)
+    const expXlsxBtn = mkBtn('Export XLSX', exportFlowsXlsx)
 
     if (!STATE.flowsEditMode) {
       addBtn.style.opacity = '.6'
@@ -1065,6 +1152,7 @@
     actions.appendChild(delSelBtn)
     actions.appendChild(filterBtn)
     actions.appendChild(expTxtBtn)
+    actions.appendChild(expXlsxBtn)
     actions.appendChild(closeBtn)
     head.appendChild(actions)
 
@@ -1585,6 +1673,7 @@
         <button id="dia-flows" style="padding:4px 10px;border:1px solid #607d8b;background:#607d8b;color:#fff;border-radius:4px;cursor:pointer;">Diameter Flows</button>
         <button id="dia-exp-csv" style="padding:4px 8px;border:1px solid #455a64;background:#455a64;color:#fff;border-radius:4px;cursor:pointer;">AVP→CSV</button>
         <button id="dia-exp-txt" style="padding:4px 8px;border:1px solid #546e7a;background:#546e7a;color:#fff;border-radius:4px;cursor:pointer;">AVP→TXT</button>
+        <button id="dia-exp-xlsx" style="padding:4px 8px;border:1px solid #1b5e20;background:#2e7d32;color:#fff;border-radius:4px;cursor:pointer;">AVP→XLSX</button>
       </div>
       <div id="dia-status" style="padding:6px 10px;color:#333;border-bottom:1px solid #f1f1f1;">Ready</div>
       <div id="dia-table" style="padding:8px 10px;overflow:auto;flex:1"></div>
@@ -1625,6 +1714,7 @@
     panel.querySelector('#dia-flows').addEventListener('click', () => openDiameterFlows())
     panel.querySelector('#dia-exp-csv').addEventListener('click', () => exportAvpCsv())
     panel.querySelector('#dia-exp-txt').addEventListener('click', () => exportAvpTxt())
+    panel.querySelector('#dia-exp-xlsx').addEventListener('click', () => exportAvpXlsx())
 
     document.addEventListener(
       'click',
@@ -1670,22 +1760,22 @@
     try {
       const savedSize = JSON.parse(localStorage.getItem(SIZE_KEY) || 'null')
       if (savedSize) applyPanelSize(savedSize)
-    } catch {}
+    } catch { }
 
     try {
       const saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
       if (saved) applyPanelPos(saved)
-    } catch {}
+    } catch { }
 
     window.addEventListener('resize', () => {
       try {
         const savedSize = JSON.parse(localStorage.getItem(SIZE_KEY) || 'null')
         if (savedSize) applyPanelSize(savedSize)
-      } catch {}
+      } catch { }
       try {
         const saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
         if (saved) applyPanelPos(saved)
-      } catch {}
+      } catch { }
     })
 
     installMenuInjector()
