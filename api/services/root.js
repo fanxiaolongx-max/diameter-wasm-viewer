@@ -107,5 +107,30 @@ module.exports = function (fastify, opts, next) {
     }
   })
 
+
+  fastify.post('/webshark/delete-capture', async (request, reply) => {
+    try {
+      const { name } = request.body || {}
+      if (!name || typeof name !== 'string') {
+        return reply.code(400).send({ ok: false, err: 'Missing file name' })
+      }
+      // Security: no directory traversal
+      if (name.includes('..') || name.includes('/') || name.includes('\\')) {
+        return reply.code(400).send({ ok: false, err: 'Invalid file name' })
+      }
+      if (!name.endsWith('.pcap') && !name.endsWith('.pcapng')) {
+        return reply.code(400).send({ ok: false, err: 'Only .pcap and .pcapng files can be deleted' })
+      }
+      const filePath = path.join(CAPTURES_PATH, name)
+      if (!fs.existsSync(filePath)) {
+        return reply.code(404).send({ ok: false, err: 'File not found' })
+      }
+      fs.unlinkSync(filePath)
+      reply.send({ ok: true })
+    } catch (e) {
+      reply.code(500).send({ ok: false, err: e.message })
+    }
+  })
+
   next()
 }

@@ -1775,6 +1775,102 @@
     if (STATE.reopenBtn) STATE.reopenBtn.style.display = 'none'
   }
 
+  // ── File Delete Buttons ────────────────────────────────────────────────────────
+  function installFileDeleteButtons() {
+    const ATTR = 'data-dia-delete-injected'
+
+    function getFileName(item) {
+      // Look for a text node containing .pcap or .pcapng
+      const spans = item.querySelectorAll('span, div, h3, p, mat-line, [class*="title"]')
+      for (const el of spans) {
+        const t = (el.textContent || '').trim()
+        if (t.endsWith('.pcap') || t.endsWith('.pcapng')) return t
+      }
+      // Fallback: any text in the item
+      const raw = (item.textContent || '').trim()
+      const m = raw.match(/[\w\s\-().]+\.(?:pcap|pcapng)/i)
+      return m ? m[0].trim() : null
+    }
+
+    async function deleteFile(name, item) {
+      const confirmed = window.confirm(`确定要永久删除 "${name}" 吗？此操作不可撤销。`)
+      if (!confirmed) return
+
+      try {
+        const res = await fetch('/webshark/delete-capture', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        })
+        const data = await res.json()
+        if (data.ok) {
+          // Animate removal
+          item.style.transition = 'opacity .3s'
+          item.style.opacity = '0'
+          setTimeout(() => { item.remove() }, 320)
+        } else {
+          alert('删除失败：' + (data.err || '未知错误'))
+        }
+      } catch (e) {
+        alert('删除失败：' + e.message)
+      }
+    }
+
+    function injectDeleteButton(item) {
+      if (item.hasAttribute(ATTR)) return
+      const name = getFileName(item)
+      if (!name) return
+      item.setAttribute(ATTR, '1')
+
+      // Make sure the item has relative positioning for the button
+      const cs = window.getComputedStyle(item)
+      if (cs.position === 'static') item.style.position = 'relative'
+
+      const btn = document.createElement('button')
+      btn.title = `删除 ${name}`
+      btn.innerHTML = '🗑'
+      btn.style.cssText = [
+        'position:absolute',
+        'right:8px',
+        'top:50%',
+        'transform:translateY(-50%)',
+        'background:transparent',
+        'border:none',
+        'cursor:pointer',
+        'font-size:16px',
+        'opacity:0',
+        'transition:opacity .2s',
+        'z-index:10',
+        'padding:4px 6px',
+        'border-radius:4px'
+      ].join(';')
+
+      item.addEventListener('mouseenter', () => { btn.style.opacity = '0.6' })
+      item.addEventListener('mouseleave', () => { btn.style.opacity = '0' })
+      btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; btn.style.background = '#ffebee' })
+      btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.6'; btn.style.background = 'transparent' })
+
+      btn.addEventListener('click', e => {
+        e.stopPropagation()
+        e.preventDefault()
+        deleteFile(name, item)
+      })
+
+      item.appendChild(btn)
+    }
+
+    function scanItems() {
+      // Only on homepage
+      const h = window.location.hash
+      const onHome = !h || h.length <= 1 || h === '#/'
+      if (!onHome) return
+      document.querySelectorAll('mat-list-item, [mat-list-item]').forEach(injectDeleteButton)
+    }
+
+    scanItems()
+    new MutationObserver(scanItems).observe(document.body, { childList: true, subtree: true })
+  }
+
   // ── Loading Overlay on File Click ────────────────────────────────────────────
   function installLoadingOverlay() {
     if (document.getElementById('dia-page-overlay')) return
@@ -2166,6 +2262,7 @@
     installCustomMenuBar()
     installAppTitlePatch()
     installLoadingOverlay()
+    installFileDeleteButtons()
 
     let pending = 0
     const origFetch = window.fetch.bind(window)
