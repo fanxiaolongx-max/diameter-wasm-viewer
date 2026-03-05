@@ -1339,9 +1339,9 @@
       }
     })
 
-    const W = Math.max(900, participants.length * 220) + 120  // +120 for right-side interval markers
+    const W = Math.max(900, participants.length * 220) + 260  // +260 for right-side interval markers (supports staggering)
     const H = Math.max(380, rows.length * 44 + 120)
-    const xOf = idx => 120 + idx * ((W - 360) / Math.max(1, participants.length - 1))  // adjusted for 120 left + right margins
+    const xOf = idx => 120 + idx * ((W - 380) / Math.max(1, participants.length - 1))  // adjusted for 120 left + 260 right
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
@@ -1569,8 +1569,11 @@
         : `${String(s).padStart(2, '0')}.${String(r).padStart(3, '0')}s`
     }
 
-    const RX = W - 10  // right margin x anchor
+    // We start the markers slightly to the right of the rightmost participant's lifeline
+    const lastPartX = participants.length > 0 ? xOf(participants.length - 1) : W - 260
+    const baseX = lastPartX + 40
     const TICK = 12    // horizontal tick length
+    const columns = [] // track occupied vertical space { col, top, bottom }
 
     // For each row, build a match: find most recent preceding row with same
     // Session-Id + same src→dst direction + same category (req/ans)
@@ -1605,6 +1608,16 @@
       const markerColor = isReq ? '#1565c0' : '#2e7d32'
       const ms = Math.round(deltaSec * 1000)
       const label = formatDeltaMs(ms)
+
+      // Find first available column that doesn't overlap vertically
+      let col = 0
+      // Ensure we add a small padding (e.g. ±12px) to vertical intersection checks
+      // to avoid visual crowding of text labels, especially when rows are filtered.
+      while (columns.some(c => c.col === col && Math.max(y1 - 12, c.top - 12) < Math.min(y2 + 12, c.bottom + 12))) {
+        col++
+      }
+      columns.push({ col, top: y1, bottom: y2 })
+      const RX = baseX + col * 60
 
       // Vertical bracket line
       const vLine = svgEl('line')
