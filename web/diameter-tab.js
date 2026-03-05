@@ -358,9 +358,8 @@
       const authApp = String(r.authApplicationId || '').toLowerCase()
       const iface = authApp.includes('3gpp gx') ? 'Gx' : 'Gy'
       const suffix = getSeqDiagSuffix()
-      const lineForName = `${srcAlias}->${dstAlias}:${label}\\nRefer to ${iface} ${label} ${suffix}`
-
-      const sheetName = makeSheetName(lineForName, i)
+      const referLine = `${iface} ${label} ${suffix}`
+      const sheetName = makeSheetName(referLine, i)
       const data = avpRows.map(a => ({
         'AVP Name': a.avpName || '',
         'AVP Content': a.avpContent || '',
@@ -1225,10 +1224,14 @@
     const expTxtBtn = mkBtn('Export sequencediagram', exportFlowsTxt)
     const expXlsxBtn = mkBtn('Export XLSX', exportFlowsXlsx)
     const seqCfgBtn = mkBtn('\u2699', () => {
-      const cur = getSeqDiagSuffix()
-      const next = window.prompt('Set the suffix text after message label (e.g. \"Normal AVP list\"):', cur)
+      const cur = getSeqDiagSuffix().replace(/ ?AVP list$/i, '').trim()
+      const next = window.prompt(
+        '请输入消息标签后缀的前缀部分（"AVP list" 会自动拼接，无需填写）\n例如输入 "Normal"，最终显示为 "Normal AVP list"：',
+        cur
+      )
       if (next === null) return
-      setSeqDiagSuffix(next)
+      const full = next.trim() ? `${next.trim()} AVP list` : 'AVP list'
+      setSeqDiagSuffix(full)
     })
     seqCfgBtn.title = 'Customize SeqDiag suffix text'
 
@@ -1336,9 +1339,9 @@
       }
     })
 
-    const W = Math.max(900, participants.length * 220)
+    const W = Math.max(900, participants.length * 220) + 120  // +120 for right-side interval markers
     const H = Math.max(380, rows.length * 44 + 120)
-    const xOf = idx => 120 + idx * ((W - 240) / Math.max(1, participants.length - 1))
+    const xOf = idx => 120 + idx * ((W - 360) / Math.max(1, participants.length - 1))  // adjusted for 120 left + right margins
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
@@ -1542,6 +1545,113 @@
       }
 
       svg.appendChild(g)
+    })
+
+    // ── Right-side interval markers ───────────────────────────────────────────
+    // Show time delta between adjacent same-category rows (Req↔Req or Ans↔Ans)
+    const REQ_SET = new Set(['CCR', 'RAR', 'STR', 'ASR', 'ACR', 'AAR', 'CER', 'DPR', 'DWR'])
+    const ANS_SET = new Set(['CCA', 'RAA', 'STA', 'ASA', 'ACA', 'AAA', 'CEA', 'DPA', 'DWA'])
+
+    function rowCategory(r) {
+      const base = rowDisplayLabel(r).replace(/[-|(].*$/, '').trim()
+      if (REQ_SET.has(base)) return 'req'
+      if (ANS_SET.has(base)) return 'ans'
+      return null
+    }
+
+    function formatDeltaMs(ms) {
+      if (ms < 1000) return `${ms}ms`
+      const m = Math.floor(ms / 60000)
+      const s = Math.floor((ms % 60000) / 1000)
+      const r = ms % 1000
+      return m > 0
+        ? `${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}.${String(r).padStart(3, '0')}s`
+        : `${String(s).padStart(2, '0')}.${String(r).padStart(3, '0')}s`
+    }
+
+    const RX = W - 10  // right margin x anchor
+    const TICK = 12    // horizontal tick length
+
+    // For each row, build a match: find most recent preceding row with same
+    // Session-Id + same src→dst direction + same category (req/ans)
+    function svgEl(tag) { return document.createElementNS('http://www.w3.org/2000/svg', tag) }
+
+    rows.forEach((r, i) => {
+      if (i === 0) return
+      const cat = rowCategory(r)
+      if (!cat || r.epochTime == null || !r.sessionId) return
+
+      // Backward scan for best match
+      let prevIdx = -1
+      for (let j = i - 1; j >= 0; j--) {
+        const p = rows[j]
+        if (rowCategory(p) !== cat) continue
+        if (p.sessionId !== r.sessionId) continue
+        if (p.src !== r.src || p.dst !== r.dst) continue
+        if (p.epochTime == null) continue
+        prevIdx = j
+        break
+      }
+      if (prevIdx < 0) return
+
+      const prev = rows[prevIdx]
+      const deltaSec = r.epochTime - prev.epochTime
+      if (!Number.isFinite(deltaSec) || deltaSec < 0) return
+
+      const y1 = 56 + prevIdx * 38
+      const y2 = 56 + i * 38
+      const yMid = (y1 + y2) / 2
+      const isReq = cat === 'req'
+      const markerColor = isReq ? '#1565c0' : '#2e7d32'
+      const ms = Math.round(deltaSec * 1000)
+      const label = formatDeltaMs(ms)
+
+      // Vertical bracket line
+      const vLine = svgEl('line')
+      vLine.setAttribute('x1', String(RX))
+      vLine.setAttribute('x2', String(RX))
+      vLine.setAttribute('y1', String(y1))
+      vLine.setAttribute('y2', String(y2))
+      vLine.setAttribute('stroke', markerColor)
+      vLine.setAttribute('stroke-width', '1.2')
+      vLine.setAttribute('opacity', '0.65')
+      svg.appendChild(vLine)
+
+      // Top tick + arrowhead pointing left ← (toward the row)
+      const t1 = svgEl('line')
+      t1.setAttribute('x1', String(RX - TICK)); t1.setAttribute('x2', String(RX))
+      t1.setAttribute('y1', String(y1)); t1.setAttribute('y2', String(y1))
+      t1.setAttribute('stroke', markerColor); t1.setAttribute('stroke-width', '1.2')
+      t1.setAttribute('opacity', '0.65')
+      svg.appendChild(t1)
+      const a1 = svgEl('polygon')
+      a1.setAttribute('points', `${RX - TICK},${y1} ${RX - TICK + 5},${y1 - 3} ${RX - TICK + 5},${y1 + 3}`)
+      a1.setAttribute('fill', markerColor); a1.setAttribute('opacity', '0.65')
+      svg.appendChild(a1)
+
+      // Bottom tick + arrowhead pointing left ←
+      const t2 = svgEl('line')
+      t2.setAttribute('x1', String(RX - TICK)); t2.setAttribute('x2', String(RX))
+      t2.setAttribute('y1', String(y2)); t2.setAttribute('y2', String(y2))
+      t2.setAttribute('stroke', markerColor); t2.setAttribute('stroke-width', '1.2')
+      t2.setAttribute('opacity', '0.65')
+      svg.appendChild(t2)
+      const a2 = svgEl('polygon')
+      a2.setAttribute('points', `${RX - TICK},${y2} ${RX - TICK + 5},${y2 - 3} ${RX - TICK + 5},${y2 + 3}`)
+      a2.setAttribute('fill', markerColor); a2.setAttribute('opacity', '0.65')
+      svg.appendChild(a2)
+
+      // Delta label to the right of the bracket
+      const lt = svgEl('text')
+      lt.setAttribute('x', String(RX + 4))
+      lt.setAttribute('y', String(yMid + 3))
+      lt.setAttribute('text-anchor', 'start')
+      lt.setAttribute('font-size', '9')
+      lt.setAttribute('font-family', 'Menlo, Consolas, monospace')
+      lt.setAttribute('fill', markerColor)
+      lt.setAttribute('font-weight', '600')
+      lt.textContent = label
+      svg.appendChild(lt)
     })
 
     body.appendChild(svg)
