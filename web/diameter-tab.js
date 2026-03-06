@@ -2146,7 +2146,7 @@
         title: '其他分析', en: 'Misc',
         items: [
           { icon: '�', label: 'Diameter Flows 时序图', badge: '', onClick: () => { openDiameterFlows() } },
-          { icon: '�🛠', label: '专家信息', badge: 'Dev', onClick: () => alert('[TODO] 专家信息功能') },
+          { icon: '🛠', label: '专家信息', badge: 'Dev', onClick: () => alert('[TODO] 专家信息功能') },
           { icon: '🔍', label: '高级搜索', badge: 'Dev', onClick: () => alert('[TODO] 高级搜索功能') }
         ]
       }
